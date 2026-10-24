@@ -394,7 +394,6 @@ class NewslettersService {
    * @private
    */
   async sendEmailVerificationMagicLink({ id, email, property = 'sender_from' }) {
-    const fromEmail = this.emailAddressService.service.defaultFromAddress;
     const { ghostMailer } = this;
 
     this.magicLinkService.transporter = {
@@ -404,7 +403,6 @@ class NewslettersService {
         }
         const msg = Object.assign(
           {
-            from: fromEmail,
             subject: 'Verify email address',
             forceTextContent: true,
           },
