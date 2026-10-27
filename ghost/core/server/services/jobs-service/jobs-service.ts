@@ -262,10 +262,11 @@ export class JobsService {
   async #process(envelope: JobEnvelope): Promise<void> {
     const deliver = this.#registry.get(envelope.type);
     if (!deliver) {
-      this.#logging.error(
-        `No handler registered for job type "${envelope.type}"; dropping delivery.`,
-      );
-      return;
+      // Fail the delivery so a durable backend can keep or retry the job, e.g.
+      // when an older container receives a new job type during a rolling deploy.
+      const message = `No handler registered for job type "${envelope.type}"; failing delivery.`;
+      this.#logging.error(message);
+      throw new errors.IncorrectUsageError({ message });
     }
 
     const startedAt = Date.now();
