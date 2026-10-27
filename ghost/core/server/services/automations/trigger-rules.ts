@@ -10,16 +10,19 @@ export const automationTriggerRuleDefinitionSchema = z.union([
     trigger_type: z.literal('free_signup'),
     scope: z.null(),
     product_id: z.null(),
+    direction: z.null(),
   }),
   z.object({
     trigger_type: z.literal('paid_subscription_started'),
     scope: z.literal('any_paid_tier'),
     product_id: z.null(),
+    direction: z.null(),
   }),
   z.object({
     trigger_type: z.literal('paid_subscription_started'),
     scope: z.literal('specific_paid_tier'),
-    product_id: z.string(),
+    product_id: z.string().refine((value) => ObjectId.isValid(value)),
+    direction: z.null(),
   }),
 ]);
 
@@ -49,11 +52,16 @@ export function buildTriggerRuleRows({
   let rules: AutomationTriggerRuleDefinition[];
   switch (scope) {
     case 'free':
-      rules = [{ trigger_type: 'free_signup', scope: null, product_id: null }];
+      rules = [{ trigger_type: 'free_signup', scope: null, product_id: null, direction: null }];
       break;
     case 'all_paid':
       rules = [
-        { trigger_type: 'paid_subscription_started', scope: 'any_paid_tier', product_id: null },
+        {
+          trigger_type: 'paid_subscription_started',
+          scope: 'any_paid_tier',
+          product_id: null,
+          direction: null,
+        },
       ];
       break;
     case 'selected_paid':
@@ -61,6 +69,7 @@ export function buildTriggerRuleRows({
         trigger_type: 'paid_subscription_started',
         scope: 'specific_paid_tier',
         product_id: productId,
+        direction: null,
       }));
       break;
     default: {
