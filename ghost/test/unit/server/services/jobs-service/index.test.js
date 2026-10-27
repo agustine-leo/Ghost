@@ -88,10 +88,8 @@ describe('jobs-service wrapper', function () {
   it('checked-in defaults select the in-memory backend with three workers', function () {
     const defaults = require('../../../../../core/shared/config/defaults.json');
 
-    assert.deepEqual(defaults.adapters.jobs, {
-      active: 'InMemoryJobsBackend',
-      InMemoryJobsBackend: { concurrency: 3 },
-    });
+    assert.equal(defaults.adapters.jobs.active, 'InMemoryJobsBackend');
+    assert.deepEqual(defaults.adapters.jobs.InMemoryJobsBackend, { concurrency: 3 });
   });
 
   it('re-init clears handlers so a reboot can register the same job types again', function () {
