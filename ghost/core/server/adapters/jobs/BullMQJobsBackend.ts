@@ -1,6 +1,6 @@
 import errors from '@tryghost/errors';
 import { Queue, Worker } from 'bullmq';
-import type { Job as BullJob, RedisOptions } from 'bullmq';
+import type { Job as BullJob, JobsOptions, RedisOptions } from 'bullmq';
 import { JobsBackendBase } from '@tryghost/adapter-base-jobs';
 import type {
   JobProcessor,
@@ -29,6 +29,13 @@ const DEFAULT_CONCURRENCY = 3;
 const DEFAULT_LOCK_DURATION_MS = 30000;
 const DEFAULT_STALLED_INTERVAL_MS = 30000;
 const DEFAULT_MAX_STALLED_COUNT = 1;
+const DEFAULT_ATTEMPTS = 3;
+const DEFAULT_BACKOFF: Backoff = { type: 'exponential', delay: 30000 };
+const DEFAULT_RETENTION = {
+  completedAgeSeconds: 86400,
+  failedAgeSeconds: 604800,
+  maxCount: 10000,
+};
 // A producer waits for its first connection, which never comes when Redis is
 // down, so enqueue gives up after this long instead of hanging its caller.
 const ENQUEUE_TIMEOUT_MS = 2000;
@@ -55,6 +62,14 @@ interface BullMQJobsBackendConfig {
   stalledInterval?: unknown;
   maxStalledCount?: unknown;
   timezone?: unknown;
+  attempts?: unknown;
+  backoff?: { type?: unknown; delay?: unknown };
+  retention?: { completedAgeSeconds?: unknown; failedAgeSeconds?: unknown; maxCount?: unknown };
+}
+
+interface Backoff {
+  type: 'exponential' | 'fixed';
+  delay: number;
 }
 
 interface Lane {
@@ -106,6 +121,51 @@ function isKnownTimezone(zone: string): boolean {
   } catch {
     return false;
   }
+}
+
+function resolveBackoff(value: BullMQJobsBackendConfig['backoff']): Backoff {
+  if (value === undefined || value === null) {
+    return DEFAULT_BACKOFF;
+  }
+  const type = value.type ?? DEFAULT_BACKOFF.type;
+  if (type !== 'exponential' && type !== 'fixed') {
+    throw invalid('backoff.type', type, '"exponential" or "fixed"');
+  }
+  return { type, delay: resolveInteger('backoff.delay', value.delay, DEFAULT_BACKOFF.delay, 0) };
+}
+
+// Retention, not remove-on-complete: dedupe on the dispatch id only holds while
+// the job key exists, and the outbox relay may resubmit a job it already sent.
+function resolveJobOptions(config: BullMQJobsBackendConfig): JobsOptions {
+  const retention = config.retention ?? {};
+  const maxCount = resolveInteger(
+    'retention.maxCount',
+    retention.maxCount,
+    DEFAULT_RETENTION.maxCount,
+    1,
+  );
+  return {
+    attempts: resolveInteger('attempts', config.attempts, DEFAULT_ATTEMPTS, 1),
+    backoff: resolveBackoff(config.backoff),
+    removeOnComplete: {
+      age: resolveInteger(
+        'retention.completedAgeSeconds',
+        retention.completedAgeSeconds,
+        DEFAULT_RETENTION.completedAgeSeconds,
+        1,
+      ),
+      count: maxCount,
+    },
+    removeOnFail: {
+      age: resolveInteger(
+        'retention.failedAgeSeconds',
+        retention.failedAgeSeconds,
+        DEFAULT_RETENTION.failedAgeSeconds,
+        1,
+      ),
+      count: maxCount,
+    },
+  };
 }
 
 function resolveConnection(config: ConnectionConfig = {}): RedisOptions {
@@ -168,6 +228,7 @@ export default class BullMQJobsBackend extends JobsBackendBase {
   private _stalledInterval: number;
   private _maxStalledCount: number;
   private _timezone: string;
+  private _jobOptions: JobsOptions;
   private _lanes: Map<string, Lane>;
   // Jobs this instance enqueued that no worker has picked up yet, and the
   // deliveries running now. Shutdown waits on both, within its time budget.
@@ -205,6 +266,7 @@ export default class BullMQJobsBackend extends JobsBackendBase {
       0,
     );
     this._timezone = resolveTimezone(config.timezone);
+    this._jobOptions = resolveJobOptions(config);
     this._lanes = new Map();
     this._unclaimed = new Map();
     this._inflight = new Set();
@@ -230,6 +292,7 @@ export default class BullMQJobsBackend extends JobsBackendBase {
     const queue = new Queue(name, {
       connection: this._producerConnection(),
       prefix: this._prefix,
+      defaultJobOptions: this._jobOptions,
     });
     const worker = new Worker(name, (bullJob) => this._deliver(bullJob), {
       connection: this._workerConnection(),
