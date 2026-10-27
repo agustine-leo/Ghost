@@ -98,12 +98,7 @@ describe.skipIf(!redisUp)('Integration: BullMQJobsBackend', function () {
   // "dispatch-1", which BullMQ would otherwise dedupe across tests.
   runJobsBackendContractTests(() => makeBackend(), {
     describe: (name, fn) => describe(name, fn),
-    // Recurring schedules land in a later commit
-    it: (name, fn) => {
-      if (!name.includes('recurring')) {
-        it(name, fn);
-      }
-    },
+    it,
   });
 
   it('is durable', function () {
@@ -227,6 +222,56 @@ describe.skipIf(!redisUp)('Integration: BullMQJobsBackend', function () {
     await queue.close();
 
     assert.match(String(errorStub.firstCall.args[0]), /test-job/);
+  });
+
+  describe('recurring schedules', function () {
+    const recurring = (type: string): DispatchEnvelope => dispatch({ type, payload: '{}' });
+
+    it('keeps the stored schedule when a later registration has a different cron', async function () {
+      const first = makeBackend();
+      const prefix = prefixes[prefixes.length - 1]!;
+      const second = new BullMQJobsBackend({ connection, prefix, ...fastConfig });
+      await first.start({ processor: async () => {} });
+      await second.start({ processor: async () => {} });
+
+      await first.scheduleRecurring(recurring('nightly'), { cron: '0 3 * * *' });
+      await first.scheduleRecurring(recurring('nightly'), { cron: '0 4 * * *' });
+      await second.scheduleRecurring(recurring('nightly'), { cron: '0 5 * * *' });
+
+      const queue = inspect(prefix);
+      const stored = await queue.getJobScheduler('nightly');
+      await queue.close();
+      await first.shutdown({ timeoutMs: 1000 });
+      await second.shutdown({ timeoutMs: 1000 });
+
+      assert.equal(stored?.pattern, '0 3 * * *');
+    });
+
+    it('stores the configured timezone', async function () {
+      const backend = makeBackend({ timezone: 'Europe/London' });
+      await backend.start({ processor: async () => {} });
+      await backend.scheduleRecurring(recurring('nightly'), { cron: '0 3 * * *' });
+
+      const queue = inspect(prefixes[prefixes.length - 1]!);
+      const stored = await queue.getJobScheduler('nightly');
+      await queue.close();
+      await backend.shutdown({ timeoutMs: 1000 });
+
+      assert.equal(stored?.tz, 'Europe/London');
+    });
+
+    it('defaults the timezone to the process timezone', async function () {
+      const backend = makeBackend();
+      await backend.start({ processor: async () => {} });
+      await backend.scheduleRecurring(recurring('nightly'), { cron: '0 3 * * *' });
+
+      const queue = inspect(prefixes[prefixes.length - 1]!);
+      const stored = await queue.getJobScheduler('nightly');
+      await queue.close();
+      await backend.shutdown({ timeoutMs: 1000 });
+
+      assert.equal(stored?.tz, Intl.DateTimeFormat().resolvedOptions().timeZone);
+    });
   });
 
   it('fails enqueue fast when Redis is unreachable and still shuts down', async function () {

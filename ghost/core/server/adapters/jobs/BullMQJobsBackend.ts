@@ -54,6 +54,7 @@ interface BullMQJobsBackendConfig {
   lockDuration?: unknown;
   stalledInterval?: unknown;
   maxStalledCount?: unknown;
+  timezone?: unknown;
 }
 
 interface Lane {
@@ -85,6 +86,26 @@ function resolvePrefix(value: unknown): string {
     throw invalid('prefix', value, 'a non-empty string');
   }
   return value;
+}
+
+// Cron schedules are read in this zone: the configured one, else the process's.
+function resolveTimezone(value: unknown): string {
+  if (value === undefined || value === null) {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  }
+  if (typeof value !== 'string' || !isKnownTimezone(value)) {
+    throw invalid('timezone', value, 'an IANA timezone name');
+  }
+  return value;
+}
+
+function isKnownTimezone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function resolveConnection(config: ConnectionConfig = {}): RedisOptions {
@@ -146,6 +167,7 @@ export default class BullMQJobsBackend extends JobsBackendBase {
   private _lockDuration: number;
   private _stalledInterval: number;
   private _maxStalledCount: number;
+  private _timezone: string;
   private _lanes: Map<string, Lane>;
   // Jobs this instance enqueued that no worker has picked up yet, and the
   // deliveries running now. Shutdown waits on both, within its time budget.
@@ -182,6 +204,7 @@ export default class BullMQJobsBackend extends JobsBackendBase {
       DEFAULT_MAX_STALLED_COUNT,
       0,
     );
+    this._timezone = resolveTimezone(config.timezone);
     this._lanes = new Map();
     this._unclaimed = new Map();
     this._inflight = new Set();
@@ -334,19 +357,29 @@ export default class BullMQJobsBackend extends JobsBackendBase {
     }
   }
 
-  scheduleRecurring(envelope: DispatchEnvelope, _schedule: RecurringSchedule): never {
+  async scheduleRecurring(envelope: DispatchEnvelope, { cron }: RecurringSchedule): Promise<void> {
     if (this._stopped) {
-      return undefined as never;
+      return;
     }
-    const { job } = envelope.payload;
+    const { job, routing } = envelope.payload;
     if (!this._processor) {
       throw new errors.IncorrectUsageError({
         message: `Cannot schedule recurring job "${job.type}" before the jobs backend is started.`,
       });
     }
-    throw new errors.IncorrectUsageError({
-      message: 'BullMQJobsBackend does not support recurring schedules yet.',
-    });
+    const { queue } = this._lane(routing?.queue ?? DEFAULT_QUEUE);
+    // First schedule per type wins, even when the cron differs: a re-registration
+    // (every boot, every container) must not disturb a schedule already in Redis.
+    // Check-then-upsert is not atomic, so two containers booting at the same
+    // moment with different crons can race; identical crons are harmless.
+    if (await queue.getJobScheduler(job.type)) {
+      return;
+    }
+    await queue.upsertJobScheduler(
+      job.type,
+      { pattern: cron, tz: this._timezone },
+      { name: job.type, data: job },
+    );
   }
 
   async shutdown(options: JobsShutdownOptions = {}): Promise<void> {
