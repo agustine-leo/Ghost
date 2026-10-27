@@ -542,8 +542,9 @@ async function initServices({ ghostServer, config, prometheusClient, jobsService
 
  * @param {object} options
  * @param {object} options.config
+ * @param {{durable: boolean} & object} options.jobsService
  */
-async function initBackgroundServices({ config }) {
+async function initBackgroundServices({ config, jobsService }) {
   debug('Begin: initBackgroundServices');
 
   // Load all inactive themes
@@ -557,20 +558,21 @@ async function initBackgroundServices({ config }) {
 
   // Resume any newsletter sends interrupted by a prior container shutdown.
   // Runs before activitypub.init so an activitypub failure can't disable recovery.
-  try {
-    const emailService = require('./server/services/email-service');
-    await emailService.service.resumeInterruptedSends();
-  } catch (err) {
-    const logging = require('@tryghost/logging');
-    logging.error(err);
+  // A durable jobs backend redelivers interrupted send jobs itself.
+  if (!jobsService.durable) {
+    try {
+      const emailService = require('./server/services/email-service');
+      await emailService.service.resumeInterruptedSends();
+    } catch (err) {
+      const logging = require('@tryghost/logging');
+      logging.error(err);
+    }
   }
 
   // Retry gift deliveries interrupted by a prior shutdown. Not awaited: recovery
   // sends sequentially and must not hold up the remaining background services.
   const giftService = require('./server/services/gifts');
   giftService.recoverPendingDeliveries();
-
-  const jobsService = require('./server/services/jobs-service').getInstance();
 
   // Runs before activitypub.init for the same reason as the send recovery
   // above: gifts would otherwise go uncleaned for the life of the process
@@ -817,7 +819,7 @@ async function bootGhost({ backend = true, frontend = true, server = true } = {}
     notifyServerReady();
 
     // Step 7 - Init our background services, we don't wait for this to finish
-    initBackgroundServices({ config });
+    initBackgroundServices({ config, jobsService });
 
     // If we pass the env var, kill Ghost
     if (process.env.GHOST_CI_SHUTDOWN_AFTER_BOOT) {

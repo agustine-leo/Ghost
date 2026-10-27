@@ -3,7 +3,7 @@ import { setImmediate } from 'node:timers/promises';
 import sinon from 'sinon';
 import { loadBootFunction } from './harness';
 
-function createBackgroundHarness(environment = 'production') {
+function createBackgroundHarness(environment = 'production', { durable = false } = {}) {
   const emailAnalyticsJobs = {
     scheduleRecurringNewslettersJob: sinon.stub().resolves(),
     scheduleRecurringAutomationsJob: sinon.stub().resolves(),
@@ -18,7 +18,7 @@ function createBackgroundHarness(environment = 'production') {
   const tinybirdSync = { scheduleJob: sinon.stub().resolves() };
   const milestones = { initAndRun: sinon.stub() };
   const signingKeys = { extras: { scheduleCheckJob: sinon.stub().resolves() } };
-  const jobsInstance = {};
+  const jobsInstance = { durable };
   const initBackgroundServices = loadBootFunction(
     'initBackgroundServices',
     {
@@ -36,7 +36,6 @@ function createBackgroundHarness(environment = 'production') {
         scheduleExpiredCompCleanupJob: async () => {},
       },
       './server/services/signing-keys': { default: signingKeys },
-      './server/services/jobs-service': { getInstance: () => jobsInstance },
       './server/services/activitypub': { init: activity },
       './server/services/tinybird-sync': tinybirdSync,
       './server/services/update-check': updateCheck,
@@ -46,7 +45,8 @@ function createBackgroundHarness(environment = 'production') {
     { globals: { process: { env: { NODE_ENV: environment } } } },
   );
   return {
-    init: (): Promise<void> => initBackgroundServices({ config: { get: () => true } }),
+    init: (): Promise<void> =>
+      initBackgroundServices({ config: { get: () => true }, jobsService: jobsInstance }),
     themes,
     recovery,
     giftRecovery,
@@ -101,6 +101,18 @@ for (const environment of ['development', 'production']) {
       boot.activity,
       boot.milestones.initAndRun,
     );
+  });
+}
+
+for (const environment of ['development', 'production']) {
+  it(`skips interrupted-send recovery on a durable jobs backend in ${environment}`, async function () {
+    const boot = createBackgroundHarness(environment, { durable: true });
+    await boot.init();
+
+    sinon.assert.notCalled(boot.recovery);
+    sinon.assert.calledOnce(boot.giftRecovery);
+    sinon.assert.calledOnce(boot.activity);
+    sinon.assert.calledOnce(boot.milestones.initAndRun);
   });
 }
 
