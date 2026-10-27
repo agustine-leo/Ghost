@@ -87,6 +87,10 @@ export class JobsService {
     this.#logOutboxUnavailable = logOutboxUnavailable ?? false;
   }
 
+  get durable(): boolean {
+    return this.#backend.durable;
+  }
+
   handle<T extends Job, D>(
     JobClass: JobConstructor<T, D>,
     handler: JobHandler<T>,

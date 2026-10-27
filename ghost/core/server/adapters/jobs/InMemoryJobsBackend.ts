@@ -58,6 +58,7 @@ interface RecurringTimer {
 // throws, while an enqueue after shutdown() is a benign shutdown race and is
 // dropped.
 export default class InMemoryJobsBackend extends JobsBackendBase {
+  readonly durable = false;
   private _processor: JobProcessor | null;
   private _stopped: boolean;
   private _defaultConcurrency: number;

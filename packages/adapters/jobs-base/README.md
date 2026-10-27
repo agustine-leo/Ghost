@@ -11,7 +11,9 @@ and lets a durable backend replace the in-memory one with no call-site change.
 
 ## Contract
 
-A backend extends `JobsBackendBase` and implements four methods:
+A backend extends `JobsBackendBase`, sets a `durable` flag and implements four methods:
+
+- `durable` - `true` when the backend survives a process restart and redelivers interrupted work itself, `false` otherwise (the in-memory backend). Callers read it through the jobs service, never the backend.
 
 - `start({processor, queues})` - wire the single delivery callback and begin accepting work. `queues` is the desired state declared by registered handlers (`{name: {concurrency}}`).
 - `enqueue(id, envelope)` - accept a `DispatchEnvelope` for delivery. `id` is the stable dispatch ID: a retry resubmits the same `id` and envelope, so a durable backend can dedupe on it. Resolves on **acceptance**, not completion.

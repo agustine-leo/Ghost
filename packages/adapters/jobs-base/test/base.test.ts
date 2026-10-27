@@ -9,6 +9,7 @@ import {
 } from '../src/base.ts';
 
 class TestBackend extends JobsBackendBase {
+  readonly durable = false;
   start(_options: JobsStartOptions) {}
   enqueue(_id: string, _envelope: DispatchEnvelope) {}
   scheduleRecurring(_envelope: DispatchEnvelope, _schedule: RecurringSchedule) {}

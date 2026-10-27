@@ -57,6 +57,10 @@ export abstract class JobsBackendBase {
     });
   }
 
+  // Whether the backend survives a process restart and redelivers interrupted
+  // work itself. Callers read it through the jobs service.
+  abstract readonly durable: boolean;
+
   abstract start(options: JobsStartOptions): void | Promise<void>;
 
   // `id` is identical on every outbox retry, so a durable backend can dedupe on it.

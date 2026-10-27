@@ -22,6 +22,10 @@ describe('InMemoryJobsBackend', function () {
   // Boot starts the jobs service before the web app is mounted or any
   // recurring job is scheduled, so a pre-start enqueue or schedule is a
   // boot-ordering bug.
+  it('is not durable', function () {
+    assert.equal(new InMemoryJobsBackend().durable, false);
+  });
+
   it('throws on an enqueue before start instead of silently losing the job', function () {
     const backend = new InMemoryJobsBackend();
     assert.throws(

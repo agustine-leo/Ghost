@@ -19,6 +19,7 @@ import { Job } from '../../../../../core/server/services/jobs-service/job';
 
 class FakeBackend implements JobsBackendBase {
   readonly requiredFns = ['start', 'enqueue', 'scheduleRecurring', 'shutdown'] as const;
+  durable = false;
   processor: JobProcessor | null = null;
   startOptions: JobsStartOptions | null = null;
   enqueued: { id: string; envelope: DispatchEnvelope }[] = [];
@@ -507,6 +508,17 @@ describe('JobsService', function () {
 
       assert.equal(logger.calls.error.length, 1);
       assert.match(String(logger.calls.error[0]![0]), /No handler registered for job type "greet"/);
+    });
+  });
+
+  describe('durable', function () {
+    it('mirrors a non-durable backend', function () {
+      assert.equal(makeService().durable, false);
+    });
+
+    it('mirrors a durable backend', function () {
+      backend.durable = true;
+      assert.equal(makeService().durable, true);
     });
   });
 
