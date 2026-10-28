@@ -28,7 +28,7 @@ export { isMetafieldColumn } from '@tryghost/metafield-csv';
 // same schemas the server enforces, without a direct dependency on the shared
 // catalog package — the framework is their surface for everything custom-fields.
 export type { Address as MemberCustomFieldAddress } from '@tryghost/metafield-types';
-export { FIELD_TYPES as MEMBER_CUSTOM_FIELD_TYPES } from '@tryghost/metafield-types';
+export { valueSchemaFor as memberCustomFieldValueSchema } from '@tryghost/metafield-types';
 export type { FieldKind as MemberCustomFieldKind } from '@tryghost/metafield-types';
 
 /**

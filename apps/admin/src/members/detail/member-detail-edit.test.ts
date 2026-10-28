@@ -15,7 +15,7 @@ import {
   resolveSlugsToLabels,
   toggleMemberNewsletter,
 } from './member-detail-edit';
-import { MEMBER_CUSTOM_FIELD_TYPES } from '@tryghost/admin-x-framework/api/member-custom-fields';
+import { memberCustomFieldValueSchema } from '@tryghost/admin-x-framework/api/member-custom-fields';
 import { describe, expect, it } from 'vitest';
 import type { MemberCustomField } from '@tryghost/admin-x-framework/api/member-custom-fields';
 import { CUSTOM_NAMESPACE, KeySchema } from '@tryghost/metafield-types/identity';
@@ -523,7 +523,7 @@ describe('getCustomFieldValidationErrors', () => {
 
     // The schema trims each part, so this names two parts as empty — a valid request
     // to clear them, not a malformed address.
-    expect(MEMBER_CUSTOM_FIELD_TYPES.address.value.safeParse(whitespaceOnly).success).toBe(true);
+    expect(memberCustomFieldValueSchema(homeAddress).safeParse(whitespaceOnly).success).toBe(true);
     expect(getCustomFieldValidationErrors({ home_address: whitespaceOnly }, fields)).toEqual({});
 
     // And with nothing left in it, the save clears the field outright.

@@ -4,9 +4,9 @@ import logging from '@tryghost/logging';
 import type { Knex } from 'knex';
 import { z } from 'zod';
 import {
-  FIELD_TYPES,
   isRecordValue,
   matchShape,
+  valueSchemaFor,
   type FieldType,
   type FieldValue,
   type MetafieldChangeEventField,
@@ -465,7 +465,7 @@ export class MetafieldValuesService {
       // `context` when `context` is empty and prepends it when it is not, so
       // anything added here reaches the client glued to the front of the reason.
       // Which field failed rides in `property`.
-      const value = FIELD_TYPES[field.type].value.safeParse(raw);
+      const value = valueSchemaFor(field).safeParse(raw);
       if (!value.success) {
         // Every issue, not the first: a value with parts fails once per part, and each
         // names the part it belongs to, which is what lets a client mark them all.

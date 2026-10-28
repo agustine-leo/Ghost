@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'vitest';
 import {
   FIELD_STRUCTURES,
-  FIELD_TYPES,
   FIELD_TYPE_IDS,
   MAX_LONG_TEXT_BYTES,
   isMetafieldChangeSource,
@@ -10,6 +9,7 @@ import {
   matchShape,
   partTypesOf,
   partsOf,
+  valueSchemaFor,
   type Address,
   type FieldType,
 } from '../src/index.ts';
@@ -74,6 +74,16 @@ describe('metafield-types catalog', function () {
     }
   });
 
+  it('refuses a rule for a type it has never heard of, naming it', function () {
+    for (const type of ['a_type_from_the_future', 'constructor']) {
+      assert.throws(
+        // @ts-expect-error a type this build doesn't know
+        () => valueSchemaFor({ type }),
+        new RegExp(`Unknown field type: ${type}`),
+      );
+    }
+  });
+
   it('tells a record value by its layout, so a list or nothing is not one', function () {
     assert.equal(isRecordValue({ city: 'London' }), true);
     assert.equal(isRecordValue(['London']), false);
@@ -100,17 +110,23 @@ describe('metafield-types catalog', function () {
     // keystrokes emptying one field and filling another.
     it('trims every text type alike', function () {
       for (const type of ['short_text', 'long_text'] as const) {
-        const padded = FIELD_TYPES[type].value.safeParse('  Ghosts  ');
+        const padded = valueSchemaFor({ type }).safeParse('  Ghosts  ');
         assert.equal(padded.success && padded.data, 'Ghosts', type);
 
-        const blank = FIELD_TYPES[type].value.safeParse('   ');
+        const blank = valueSchemaFor({ type }).safeParse('   ');
         assert.equal(blank.success && blank.data, '', type);
       }
     });
 
     it('measures a bound against the value rather than its padding', function () {
-      assert.equal(FIELD_TYPES.short_text.value.safeParse(`  ${'x'.repeat(255)}  `).success, true);
-      assert.equal(FIELD_TYPES.short_text.value.safeParse('x'.repeat(256)).success, false);
+      assert.equal(
+        valueSchemaFor({ type: 'short_text' }).safeParse(`  ${'x'.repeat(255)}  `).success,
+        true,
+      );
+      assert.equal(
+        valueSchemaFor({ type: 'short_text' }).safeParse('x'.repeat(256)).success,
+        false,
+      );
     });
   });
 
@@ -119,7 +135,7 @@ describe('metafield-types catalog', function () {
   // to is sized in bytes. A character-based bound would accept a multibyte
   // value that the column can't hold.
   describe('long_text is bounded in bytes, not characters', function () {
-    const parse = (value: string) => FIELD_TYPES.long_text.value.safeParse(value).success;
+    const parse = (value: string) => valueSchemaFor({ type: 'long_text' }).safeParse(value).success;
 
     it('accepts a value of exactly the limit', function () {
       assert.equal(parse('a'.repeat(MAX_LONG_TEXT_BYTES)), true);
@@ -146,7 +162,7 @@ describe('metafield-types catalog', function () {
   // pin it: the CSV and admin paths both strip blank parts before a value
   // reaches the catalog, so neither ever presents the empty case this rejects.
   describe('an address must name at least one part', function () {
-    const parse = (value: unknown) => FIELD_TYPES.address.value.safeParse(value).success;
+    const parse = (value: unknown) => valueSchemaFor({ type: 'address' }).safeParse(value).success;
 
     it('accepts a partial address', function () {
       // There is no postal code in Hong Kong and no city in an Irish
@@ -203,13 +219,13 @@ describe('metafield-types catalog', function () {
     });
 
     it('normalises the case of a country code, so one country is one value', function () {
-      const parsed = FIELD_TYPES.address.value.safeParse({ country: 'gb' });
+      const parsed = valueSchemaFor({ type: 'address' }).safeParse({ country: 'gb' });
       assert.equal(parsed.success && parsed.data.country, 'GB');
 
       // Whichever way it arrives, it is stored the same way, so a filter for one
       // form cannot miss members holding another.
       for (const written of ['GB', 'gb', 'Gb', ' gB ']) {
-        const result = FIELD_TYPES.address.value.safeParse({ country: written });
+        const result = valueSchemaFor({ type: 'address' }).safeParse({ country: written });
         assert.equal(
           result.success && result.data.country,
           'GB',
@@ -222,12 +238,17 @@ describe('metafield-types catalog', function () {
       // XK is not an ISO-assigned code, and it is what Kosovo is written as. Ghost
       // stores it rather than refusing a member's own country.
       for (const code of ['XK', 'TW', 'PS', 'EH']) {
-        assert.equal(FIELD_TYPES.address.value.safeParse({ country: code }).success, true, code);
+        assert.equal(
+          valueSchemaFor({ type: 'address' }).safeParse({ country: code }).success,
+          true,
+          code,
+        );
       }
     });
 
     it('takes two ASCII letters as a country code and nothing else', function () {
-      const parseCountry = (country: string) => FIELD_TYPES.address.value.safeParse({ country });
+      const parseCountry = (country: string) =>
+        valueSchemaFor({ type: 'address' }).safeParse({ country });
 
       // Uppercasing is not length-preserving, so a rule counting the characters of
       // the result is wrong both ways: one character can become two, and two can
@@ -242,7 +263,7 @@ describe('metafield-types catalog', function () {
     });
 
     it('trims a part, so its bound measures the value and not the padding', function () {
-      const result = FIELD_TYPES.address.value.safeParse({
+      const result = valueSchemaFor({ type: 'address' }).safeParse({
         line1: '  1 Main St  ',
         country: ' GB ',
       });
@@ -251,7 +272,7 @@ describe('metafield-types catalog', function () {
 
       // A value that reaches the limit exactly still fits once its padding is gone.
       assert.equal(
-        FIELD_TYPES.address.value.safeParse({ line1: `  ${'x'.repeat(255)}  ` }).success,
+        valueSchemaFor({ type: 'address' }).safeParse({ line1: `  ${'x'.repeat(255)}  ` }).success,
         true,
       );
     });
@@ -277,7 +298,7 @@ describe('metafield-types catalog', function () {
     it('reads a part of nothing but whitespace as empty, so it clears', function () {
       // Trimming happens per part above, so whitespace has already become the empty
       // string by the time the rule runs — and empty is an instruction, not a value.
-      const result = FIELD_TYPES.address.value.safeParse({ line1: '   ', city: '\t' });
+      const result = valueSchemaFor({ type: 'address' }).safeParse({ line1: '   ', city: '\t' });
       assert.equal(result.success, true);
       assert.deepEqual(result.data, { line1: '', city: '' });
     });
@@ -285,7 +306,7 @@ describe('metafield-types catalog', function () {
 
   describe('what a broken rule says', function () {
     const reasonFor = (type: FieldType, value: unknown): string | null => {
-      const result = FIELD_TYPES[type].value.safeParse(value);
+      const result = valueSchemaFor({ type }).safeParse(value);
       return result.success ? null : (result.error.issues[0]?.message ?? null);
     };
 

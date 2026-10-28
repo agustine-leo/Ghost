@@ -20,9 +20,10 @@ npm install @tryghost/metafield-types
   together (`custom.shipping_address.country`). Each is a type that only its
   check produces. It loads `zod/mini`, a small fraction of zod's size, so a
   browser app can check identities without paying for the rest.
-- `@tryghost/metafield-types`: the structure above, plus the rules that validate
-  a value of each type. These are built on [zod](https://zod.dev), and only this
-  entry point loads all of it, so an integration that only draws inputs can use
+- `@tryghost/metafield-types`: the structure above, plus `valueSchemaFor(field)`,
+  the rule a value of a field must satisfy. The rules are built on
+  [zod](https://zod.dev), and only this entry point loads all of it, so an
+  integration that only draws inputs can use
   `./structure` and `./countries` without loading zod at all.
 
 ## Compatibility

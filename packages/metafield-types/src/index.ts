@@ -332,7 +332,9 @@ function record<T extends RecordFieldType>(type: T, { error }: { error: string }
   return { value };
 }
 
-export const FIELD_TYPES = defineFieldTypes({
+// Not exported: a value is checked against its field through `valueSchemaFor`, which is the
+// one place a rule depending on how a field is set up can be added.
+const FIELD_TYPES = defineFieldTypes({
   short_text: { value: PART_TYPES.short_text },
   long_text: { value: longText() },
   // An address is a delivery address, so its bounds are what a courier will accept
@@ -346,9 +348,23 @@ export const FIELD_TYPES = defineFieldTypes({
   address: record('address', { error: 'Enter at least one part of the address.' }),
 });
 
-/** Named for the admin types built on it, which speak of an address rather than a record. */
-export const AddressValue = FIELD_TYPES.address.value;
-export type Address = z.infer<typeof AddressValue>;
+/**
+ * The rule a value of one field must satisfy. It takes the field rather than its type so that a
+ * rule depending on the field's own setup, such as the options a select field offers, changes here
+ * and nowhere else. Throws for a type this build doesn't know, as `matchShape` does.
+ */
+export function valueSchemaFor<T extends FieldType>(field: {
+  type: T;
+}): (typeof FIELD_TYPES)[T]['value'] {
+  if (!Object.prototype.hasOwnProperty.call(FIELD_TYPES, field.type)) {
+    // A native error, because this package depends on nothing but zod.
+    // oxlint-disable-next-line ghost/ghost-custom/no-native-error
+    throw new Error(`Unknown field type: ${field.type}`);
+  }
+  return FIELD_TYPES[field.type].value;
+}
+
+export type Address = z.infer<(typeof FIELD_TYPES)['address']['value']>;
 
 /**
  * A value of any field type, as a caller holding a field of unknown type must accept it.

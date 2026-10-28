@@ -4,8 +4,8 @@ import { z } from 'zod';
 import { PartSchema, QUALIFIER, SEPARATOR } from '@tryghost/metafield-types/identity';
 import { isRecordValue, matchShape } from '@tryghost/metafield-types/structure';
 import {
-  MEMBER_CUSTOM_FIELD_TYPES,
   memberCustomFieldIdentity,
+  memberCustomFieldValueSchema,
 } from '@tryghost/admin-x-framework/api/member-custom-fields';
 import { dequal } from 'dequal';
 import type { EditMemberData, Member } from '@tryghost/admin-x-framework/api/members';
@@ -342,7 +342,7 @@ export function getCustomFieldValidationErrors(
     if (value === undefined) {
       continue;
     }
-    const result = MEMBER_CUSTOM_FIELD_TYPES[field.type].value.safeParse(value);
+    const result = memberCustomFieldValueSchema(field).safeParse(value);
     if (!result.success) {
       for (const issue of result.error.issues) {
         const parts = z.array(PartSchema).safeParse(issue.path);
