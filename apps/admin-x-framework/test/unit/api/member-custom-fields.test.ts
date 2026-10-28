@@ -7,21 +7,25 @@ import {
   memberCustomFieldParts,
 } from '../../../src/api/member-custom-fields';
 import { CUSTOM_NAMESPACE, KeySchema } from '@tryghost/metafield-types/identity';
+import { LucideIcon } from '@tryghost/shade/utils';
 
 // Compile-time cases: the build failing is the assertion. Each `@ts-expect-error` fails the
 // build if the case it names stops being an error. Directives sit immediately above the
 // property where TypeScript reports the error.
 const composite = { line1: 'a', line2: 'b', city: 'c', state: 'd', postal_code: 'e', country: 'f' };
+const icon = LucideIcon.MapPin;
 
 const labelled: FieldTypePresentation<'address'> = {
   label: 'Address',
   input: 'address',
+  icon,
   partLabels: composite,
 };
 
 const missingPart: FieldTypePresentation<'address'> = {
   label: 'Address',
   input: 'address',
+  icon,
   // @ts-expect-error a composite missing one of the parts its value schema declares
   partLabels: { line1: 'a', line2: 'b', city: 'c', state: 'd', country: 'f' },
 };
@@ -29,16 +33,18 @@ const missingPart: FieldTypePresentation<'address'> = {
 const unknownPart: FieldTypePresentation<'address'> = {
   label: 'Address',
   input: 'address',
+  icon,
   // @ts-expect-error a composite naming a part its value schema does not declare
   partLabels: { ...composite, county: 'g' },
 };
 
 // @ts-expect-error a composite with no part labels at all
-const unlabelled: FieldTypePresentation<'address'> = { label: 'Address', input: 'address' };
+const unlabelled: FieldTypePresentation<'address'> = { label: 'Address', input: 'address', icon };
 
 const scalarWithParts: FieldTypePresentation<'short_text'> = {
   label: 'Short text',
   input: 'text',
+  icon,
   // @ts-expect-error a type whose value is one thing has no parts to name
   partLabels: { line1: 'a' },
 };

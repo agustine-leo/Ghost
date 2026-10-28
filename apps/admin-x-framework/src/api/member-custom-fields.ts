@@ -6,13 +6,17 @@ import {
   type MemberAccess,
   type MetafieldDefinition,
   partsOf,
+  type FieldKind,
   type FieldType,
+  type KindOf,
   type PartType,
   type PartsOf,
+  type ShapeOf,
 } from '@tryghost/metafield-types';
 import { z } from 'zod';
 import { IdentityTextSchema, type Part } from '@tryghost/metafield-types/identity';
 import { csvColumnsForField } from '@tryghost/metafield-csv';
+import { LucideIcon } from '@tryghost/shade/utils';
 import { createMutation, createQuery } from '../utils/api/hooks';
 import { countryName } from '../utils/countries';
 
@@ -85,18 +89,36 @@ export const memberAccessLabel = (access: MemberCustomFieldAccess): string =>
  *
  * The shared catalog (@tryghost/metafield-types) owns what a field type *is*
  * - its storage and validation. This catalog owns what a publisher is told it is:
- * its name, and which control collects a value. Admin surfaces (settings
+ * its name, its icon, and which control collects a value. Admin surfaces (settings
  * list/modal, member detail) render from here so every surface presents fields
  * identically. The backend never sees any of this.
- *
- * The icon is not here: it is a component, so it sits with admin's, under the same type ids.
  */
 export type MemberCustomFieldUserType = {
   id: FieldType;
   label: string;
   // Which control collects/edits a value of this type
-  input: 'text' | 'textarea' | 'address';
+  input: MemberCustomFieldInput;
+  icon: typeof LucideIcon.Type;
 };
+
+/**
+ * The controls a scalar can be edited with, by kind. A kind left out has no control yet, so a type
+ * of that kind fails to compile at its presentation entry until a control is added here and the
+ * editor draws it.
+ */
+type ScalarInputs = { text: 'text' | 'textarea' };
+type ScalarInputFor<K extends FieldKind> = K extends keyof ScalarInputs ? ScalarInputs[K] : never;
+
+/**
+ * A record's control is named after its own type, so a new record type fails to compile at the
+ * editor until it has a control of its own. The address control lays out address parts, and a
+ * record that borrowed it would lose whatever else it holds.
+ */
+type InputFor<T extends FieldType> = {
+  scalar: ScalarInputFor<KindOf<T>>;
+  record: T;
+}[ShapeOf<T>];
+export type MemberCustomFieldInput = { [T in FieldType]: InputFor<T> }[FieldType];
 
 /**
  * How one field type is presented, constrained by what its value is: a composite names
@@ -109,7 +131,8 @@ export type MemberCustomFieldUserType = {
  */
 export type FieldTypePresentation<T extends FieldType> = {
   label: string;
-  input: MemberCustomFieldUserType['input'];
+  input: InputFor<T>;
+  icon: MemberCustomFieldUserType['icon'];
 } & ([PartsOf<T>] extends [never]
   ? { partLabels?: never }
   : { partLabels: Record<PartsOf<T>, string> });
@@ -117,11 +140,12 @@ export type FieldTypePresentation<T extends FieldType> = {
 // Presentation for every field type in the shared catalog. The mapped type keeps this
 // exhaustive: adding a field type upstream fails to compile here until it has one.
 const fieldTypePresentation: { [T in FieldType]: FieldTypePresentation<T> } = {
-  short_text: { label: 'Short text', input: 'text' },
-  long_text: { label: 'Long text', input: 'textarea' },
+  short_text: { label: 'Short text', input: 'text', icon: LucideIcon.Type },
+  long_text: { label: 'Long text', input: 'textarea', icon: LucideIcon.AlignLeft },
   address: {
     label: 'Address',
     input: 'address',
+    icon: LucideIcon.MapPin,
     partLabels: {
       line1: 'Address line 1',
       line2: 'Address line 2',

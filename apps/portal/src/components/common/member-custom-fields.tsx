@@ -1,7 +1,7 @@
 import React from 'react';
 import type { Address } from '@tryghost/metafield-types';
 import { FIELD_STRUCTURES } from '@tryghost/metafield-types/structure';
-import type { FieldType } from '@tryghost/metafield-types/structure';
+import type { FieldType, FieldTypeOfKind } from '@tryghost/metafield-types/structure';
 
 import InputForm from './input-form';
 import { countryOptions } from '../../utils/countries';
@@ -35,8 +35,8 @@ const addressLabels = (): Record<keyof Address, string> => ({
   country: t('Country'),
 });
 
-interface FieldProps {
-  field: DrawableCustomField;
+interface FieldProps<T extends FieldType = FieldType> {
+  field: DrawableCustomField & { type: T };
   value: CustomFieldValue;
   /** What the site refused, keyed by the name of the input that holds it. */
   errors: Record<string, string | undefined>;
@@ -44,9 +44,14 @@ interface FieldProps {
   onKeyDown: (event: React.KeyboardEvent) => void;
 }
 
-/** A field that holds a single thing: one input of the kind given, carrying its own reason. */
 const scalarField = (input: 'text' | 'textarea') =>
-  function ScalarField({ field, value, errors, onChange, onKeyDown }: FieldProps) {
+  function ScalarField({
+    field,
+    value,
+    errors,
+    onChange,
+    onKeyDown,
+  }: FieldProps<FieldTypeOfKind<'text'>>) {
     const name = `custom:${field.key}`;
     return (
       <InputForm
@@ -102,7 +107,7 @@ function AddressRow({ parts, input, onChange, onKeyDown }: AddressRowProps) {
  * the whole field, in the order the parts are shown, each naming the part it belongs to,
  * so the group keeps its shape however many parts are wrong.
  */
-function AddressField({ field, value, errors, onChange, onKeyDown }: FieldProps) {
+function AddressField({ field, value, errors, onChange, onKeyDown }: FieldProps<'address'>) {
   const held = compositeValue(value);
   const labels = addressLabels();
   const readOnly = field.access.member !== 'write';
@@ -180,15 +185,25 @@ interface MemberCustomFieldsProps {
 }
 
 /**
- * Which component draws which type. Stated as a whole rather than as a fallback, so a
- * type added to the catalog stops this compiling until something here knows how to draw
- * it, instead of being rendered as whatever the last branch happened to be.
+ * Every type is listed, with no fallback, so a type added to the catalog fails to compile here
+ * until something can draw it. Each component is typed to the types it can draw: the text input
+ * draws only text, and a record needs a component of its own because the address component lays out
+ * address parts.
  */
-const DRAWN_BY = {
+const DRAWN_BY: { [T in FieldType]: React.ComponentType<FieldProps<T>> } = {
   address: AddressField,
   short_text: scalarField('text'),
   long_text: scalarField('textarea'),
-} satisfies Record<FieldType, React.ComponentType<FieldProps>>;
+};
+
+/**
+ * Generic over the field's type so the compiler can pair the field with the component for that
+ * type, which indexing `DRAWN_BY` with a union of types can't check.
+ */
+function DrawnField<T extends FieldType>(props: FieldProps<T>) {
+  const Field: React.ComponentType<FieldProps<T>> = DRAWN_BY[props.field.type];
+  return <Field {...props} />;
+}
 
 /** The fields a publisher has opened to members, as the member fills them in. */
 export default function MemberCustomFields({
@@ -200,19 +215,16 @@ export default function MemberCustomFields({
 }: MemberCustomFieldsProps) {
   return (
     <>
-      {fields.map((field) => {
-        const Field = DRAWN_BY[field.type];
-        return (
-          <Field
-            key={field.key}
-            errors={errors}
-            field={field}
-            value={values[field.key]}
-            onChange={onChange}
-            onKeyDown={onKeyDown}
-          />
-        );
-      })}
+      {fields.map((field) => (
+        <DrawnField
+          key={field.key}
+          errors={errors}
+          field={field}
+          value={values[field.key]}
+          onChange={onChange}
+          onKeyDown={onKeyDown}
+        />
+      ))}
     </>
   );
 }

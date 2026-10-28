@@ -101,10 +101,19 @@ export type FieldTypeOfShape<S extends FieldShape> = {
 }[FieldType];
 
 /**
- * What to do with a type of each shape, given the type's structure. Every shape needs an
- * answer, so a shape added above fails to compile at every caller until each says what it
- * does with one.
+ * The kind a scalar type declares, or never for another shape. Distributes over `T`, so a union of
+ * types gives the kinds of its scalars.
  */
+export type KindOf<T extends FieldType> = T extends FieldType
+  ? (typeof FIELD_STRUCTURES)[T] extends { shape: 'scalar'; kind: infer K extends FieldKind }
+    ? K
+    : never
+  : never;
+
+export type FieldTypeOfKind<K extends FieldKind> = {
+  [T in FieldType]: (typeof FIELD_STRUCTURES)[T] extends { shape: 'scalar'; kind: K } ? T : never;
+}[FieldType];
+
 export type ShapeHandlers<R> = {
   [S in FieldShape]: (structure: Extract<FieldStructure, { shape: S }>) => R;
 };
