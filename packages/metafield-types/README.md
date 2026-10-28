@@ -11,8 +11,9 @@ npm install @tryghost/metafield-types
 
 ## Entry points
 
-- `@tryghost/metafield-types/structure`: the type ids, each type's parts and the
-  type of value each part holds. It depends on nothing.
+- `@tryghost/metafield-types/structure`: the type ids and what each type is made of:
+  its shape, and its kind or its parts and the type of value each part holds. It depends
+  on nothing.
 - `@tryghost/metafield-types/countries`: the two-letter country codes a country
   part accepts. It depends on nothing.
 - `@tryghost/metafield-types/identity`: how a field is named everywhere: its
@@ -29,14 +30,16 @@ npm install @tryghost/metafield-types
 ## Compatibility
 
 An integration using this package talks to sites on many Ghost versions, so a type
-never changes once it has shipped: it keeps its parts and the type of value each
-holds. New structure arrives as a new type. An integration should skip a type it
-doesn't recognise, which is what happens when a site is on a newer Ghost than the
-package the integration was built with.
+never changes once it has shipped: it keeps its shape, its kind or parts, and the type
+of value each part holds. New structure arrives as a new type. An integration should
+skip a type it doesn't recognise, which is what happens when a site is on a newer Ghost
+than the package the integration was built with.
 
 ## Develop
 
-This is a workspace package in the Ghost monorepo. From the repo root:
+This is a workspace package in the Ghost monorepo. Adding a field type to Ghost is
+covered in [`docs/adding-a-field-type.md`](docs/adding-a-field-type.md). From the repo
+root:
 
 ```bash
 pnpm --filter @tryghost/metafield-types build   # compile to build/ with tsc (ESM)
