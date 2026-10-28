@@ -902,7 +902,7 @@ jobs:
           --health-timeout=5s
           --health-retries=60
       redis:
-        image: redis:7.4@sha256:bd28fff4b665fdf1b73e8b5b73ec05d2f858f4fa3c8ea0d7c9bc09f7f6bf7039
+        image: redis:7.4@sha256:de248056965d51eaccc002214e9ebd9becfc8ca4e1fc76f89286882475b7eca7
         ports:
           - 6379:6379
         options: >-
