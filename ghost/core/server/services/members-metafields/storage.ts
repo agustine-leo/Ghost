@@ -80,16 +80,17 @@ export function valueFromRows(rows: readonly ValueRow[]): unknown {
       continue;
     }
 
-    const last = segments.pop() as string;
+    const last = segments[segments.length - 1];
     // A segment already holding a string is replaced rather than descended into: this
     // runs over every member of a list response, so a contradictory pair of paths
     // should cost one odd value rather than the whole response.
-    const parent = segments.reduce<Record<string, unknown>>((target, segment) => {
-      if (!isRecordValue(target[segment])) {
-        target[segment] = {};
-      }
-      return target[segment] as Record<string, unknown>;
-    }, value);
+    let parent = value;
+    for (const segment of segments.slice(0, -1)) {
+      const held = parent[segment];
+      const child: Record<string, unknown> = isRecordValue(held) ? held : {};
+      parent[segment] = child;
+      parent = child;
+    }
     parent[last] = row.value_text;
   }
 

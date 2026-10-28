@@ -15,7 +15,7 @@ import { matchShape } from '@tryghost/metafield-types/structure';
 import type {
   FieldDescriptor,
   FieldProvider,
-  FilterTypeId,
+  PresenceAddressing,
   ValueSemantics,
 } from '@/shared/filters';
 import type {
@@ -24,10 +24,22 @@ import type {
   MemberCustomFieldPartType,
 } from '@tryghost/admin-x-framework/api/member-custom-fields';
 
-export const KIND_FILTER_TYPE: { [K in MemberCustomFieldKind]: FilterTypeId } = {
-  text: 'text',
-  date: 'plain_date',
-  number: 'number',
+type ScalarFilterBase = {
+  key: string;
+  icon: 'text';
+  addressing: PresenceAddressing;
+  ui: { label: string; type: 'custom' };
+};
+
+// A date custom field holds a calendar date rather than an instant, so it filters as plain_date.
+// Each entry builds its own descriptor so the compiler checks it against that filter type, which a
+// map from kind to filter type can't do.
+export const KIND_FILTER: {
+  [K in MemberCustomFieldKind]: (base: ScalarFilterBase) => FieldDescriptor;
+} = {
+  text: (base) => ({ ...base, type: 'text' }),
+  date: (base) => ({ ...base, type: 'plain_date' }),
+  number: (base) => ({ ...base, type: 'number' }),
 };
 
 // How each part of a composite filters. A typed part is text; a part picked from a
@@ -117,16 +129,15 @@ export type CustomFieldDefinition = Pick<MemberCustomField, 'namespace' | 'key' 
 export function customFieldDescriptor(definition: CustomFieldDefinition): FieldDescriptor {
   return matchShape<FieldDescriptor>(definition.type, {
     scalar: ({ kind }) =>
-      ({
+      KIND_FILTER[kind]({
         key: metafieldFieldId(definition),
         icon: 'text',
-        type: KIND_FILTER_TYPE[kind],
         addressing: customFieldAddressing(definition),
         ui: {
           label: definition.name,
           type: 'custom',
         },
-      }) as FieldDescriptor,
+      }),
     record: ({ parts }) =>
       domainField({
         key: metafieldFieldId(definition),

@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'vitest';
 import {
   FIELD_STRUCTURES,
-  FIELD_TYPE_IDS,
   MAX_LONG_TEXT_BYTES,
   isMetafieldChangeSource,
+  isFieldType,
   isRecordValue,
   matchShape,
   partTypesOf,
@@ -42,12 +42,8 @@ describe('metafield-types catalog', function () {
     };
 
     for (const [type, structure] of Object.entries(shipped)) {
-      assert.ok(FIELD_TYPE_IDS.includes(type as FieldType), `${type} still exists`);
-      assert.deepEqual(
-        FIELD_STRUCTURES[type as FieldType],
-        structure,
-        `${type} keeps its structure`,
-      );
+      assert.ok(isFieldType(type), `${type} still exists`);
+      assert.deepEqual(FIELD_STRUCTURES[type], structure, `${type} keeps its structure`);
     }
   });
 
@@ -62,13 +58,19 @@ describe('metafield-types catalog', function () {
     assert.equal(layout('address'), 'parts line1, line2, city, state, postal_code, country');
   });
 
+  it('knows its own types, and nothing else as one', function () {
+    assert.equal(isFieldType('address'), true);
+    for (const value of ['a_type_from_the_future', 'constructor', 'toString', 42, null]) {
+      assert.equal(isFieldType(value), false, String(value));
+    }
+  });
+
   it('refuses to answer for a type it has never heard of, naming it', function () {
-    // Only reachable by lying about the type, as an integration built against an older
-    // package does when it passes along a type off the wire instead of skipping it.
-    // A name every object has is no more a type than any other.
+    // A plain JavaScript caller can pass any string as a type, including a name every object has.
     for (const type of ['a_type_from_the_future', 'constructor']) {
       assert.throws(
-        () => matchShape(type as FieldType, { scalar: () => 1, record: () => 2 }),
+        // @ts-expect-error a type this build doesn't know
+        () => matchShape(type, { scalar: () => 1, record: () => 2 }),
         new RegExp(`Unknown field type: ${type}`),
       );
     }
@@ -97,11 +99,9 @@ describe('metafield-types catalog', function () {
   });
 
   it('reads a type it has never heard of as having no parts', function () {
-    // Only reachable by lying about the type, which is what an admin build older than
-    // the server it talks to does: the type is a string off the wire, asserted not
-    // checked. Failing here would take the surface down over a field it merely cannot
-    // render, so it degrades and the server stays authoritative.
-    assert.equal(partsOf('a_type_from_the_future' as FieldType), null);
+    // A plain JavaScript caller can pass any string as a type.
+    // @ts-expect-error a type this build doesn't know
+    assert.equal(partsOf('a_type_from_the_future'), null);
   });
 
   describe('text is trimmed, whatever type it belongs to', function () {
@@ -348,9 +348,10 @@ describe('metafield-types catalog', function () {
         ['long_text', 'x'.repeat(MAX_LONG_TEXT_BYTES + 1)],
         ['address', {}],
         ['address', { city: 42 }],
-        ...partsOf('address')!.map(
-          (part) => ['address', { [part]: 'x'.repeat(256) }] as [FieldType, unknown],
-        ),
+        ...Object.keys(FIELD_STRUCTURES.address.parts).map((part): [FieldType, unknown] => [
+          'address',
+          { [part]: 'x'.repeat(256) },
+        ]),
       ];
 
       for (const [type, value] of brokenValues) {

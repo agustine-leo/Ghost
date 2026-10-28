@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { z } from 'zod';
 
 const {
   agentProvider,
@@ -1401,11 +1402,22 @@ describe('Member Custom Fields Admin API', function () {
       await setValues(third, { [field.key]: 'Opera' });
 
       const { body } = await agent.get('members/?include=metafields').expectStatus(200);
-      const byId = new Map(body.members.map((m: { id: string }) => [m.id, m]));
+      const listed = z
+        .object({
+          members: z.array(
+            z.object({
+              id: z.string(),
+              metafields: z.object({ custom: z.record(z.string(), z.unknown()) }).optional(),
+            }),
+          ),
+        })
+        .parse(body);
+      const byId = new Map(listed.members.map((member) => [member.id, member]));
 
-      assert.deepEqual((byId.get(first) as any).metafields.custom, { [field.key]: 'Ghosts' });
-      assert.equal(Object.hasOwn(byId.get(second) as object, 'metafields'), false);
-      assert.deepEqual((byId.get(third) as any).metafields.custom, { [field.key]: 'Opera' });
+      assert.deepEqual(byId.get(first)?.metafields?.custom, { [field.key]: 'Ghosts' });
+      assert.ok(byId.has(second), 'the member with no values is listed');
+      assert.equal(byId.get(second)?.metafields, undefined);
+      assert.deepEqual(byId.get(third)?.metafields?.custom, { [field.key]: 'Opera' });
     });
 
     it('updates a value that is already set', async function () {
@@ -1764,11 +1776,7 @@ describe('Member Custom Fields Admin API', function () {
       assert.equal(body.errors[0].property, 'metafields.custom.__proto__');
 
       assert.deepEqual(await readValues(memberId), {});
-      assert.equal(
-        ({} as Record<string, unknown>).polluted,
-        undefined,
-        'the prototype must not be polluted',
-      );
+      assert.equal('polluted' in {}, false, 'the prototype must not be polluted');
     });
 
     it('accepts an empty metafields when creating a member', async function () {
@@ -2394,16 +2402,17 @@ describe('Member Custom Fields Admin API', function () {
 
     // A field is addressed publicly by its key, and the key rides in the action's
     // context rather than in resource_id, which holds the row id.
+    const ActionContext = z.object({
+      primary_name: z.string().optional(),
+      key: z.string().optional(),
+      previous_name: z.string().optional(),
+      member_access: z.string().optional(),
+      previous_member_access: z.string().optional(),
+      action_name: z.string().optional(),
+      count: z.number().optional(),
+    });
     const contextOf = (a: { context: unknown }) =>
-      (typeof a.context === 'string' ? JSON.parse(a.context) : a.context) as {
-        primary_name?: string;
-        key?: string;
-        previous_name?: string;
-        member_access?: string;
-        previous_member_access?: string;
-        action_name?: string;
-        count?: number;
-      };
+      ActionContext.parse(typeof a.context === 'string' ? JSON.parse(a.context) : a.context);
 
     beforeAll(async function () {
       actorId = (await agent.get('users/me/').expectStatus(200)).body.users[0].id;
@@ -2417,10 +2426,9 @@ describe('Member Custom Fields Admin API', function () {
         .expectStatus(200);
 
       const actions = await customFieldActions();
-      const opened = actions.find((a: { event: string }) => a.event === 'edited') as unknown as {
-        context: unknown;
-      };
+      const opened = actions.find((a: { event: string }) => a.event === 'edited');
 
+      assert.ok(opened, 'an edited action was recorded');
       assert.equal(contextOf(opened).member_access, 'write');
       assert.equal(contextOf(opened).previous_member_access, 'none');
     });

@@ -3,6 +3,7 @@ import { KeySchema, NamespaceSchema } from './identity.js';
 import {
   FIELD_STRUCTURES,
   FIELD_TYPE_IDS,
+  isFieldType,
   type FieldType,
   type FieldTypeOfShape,
   type PartType,
@@ -18,6 +19,7 @@ export {
   FIELD_STRUCTURES,
   FIELD_TYPE_IDS,
   PART_TYPE_IDS,
+  isFieldType,
   isRecordValue,
   matchShape,
   partTypesOf,
@@ -48,8 +50,8 @@ export {
  *
  * A type is one of two things. Most are a value in their own right, declared as the
  * schema that value must satisfy. An address is a *record*: a set of named parts, each a
- * value in the same sense, from which the whole type's schema is derived. Nothing stops a
- * part being a record itself.
+ * value in the same sense, from which the whole type's schema is derived. A part is text of
+ * one of the part types below, never a record itself.
  *
  * ## What a write may say
  *
@@ -157,7 +159,7 @@ export type MetafieldChangeSource = (typeof METAFIELD_CHANGE_SOURCES)[number];
 
 /** Whether a source is one this build knows how to name; a newer server can send others. */
 export const isMetafieldChangeSource = (source: string): source is MetafieldChangeSource =>
-  (METAFIELD_CHANGE_SOURCES as readonly string[]).includes(source);
+  METAFIELD_CHANGE_SOURCES.some((known) => known === source);
 
 /** A field as an activity feed entry names it: its name is copied so the entry outlives a rename. */
 export const MetafieldChangeEventFieldSchema = z.object({
@@ -261,20 +263,6 @@ const clearable = <T extends PartSchema>(schema: T) =>
 
 type RecordFieldType = FieldTypeOfShape<'record'>;
 
-/** A record type's declared parts, keyed by part, each naming the type of value it holds. */
-type DeclaredParts<T extends RecordFieldType> = (typeof FIELD_STRUCTURES)[T]['parts'];
-
-/**
- * The shape a record type's schema is built from: its declared parts, each carrying the
- * rule for what that part holds. Keyed off `./structure`, so the schema a value is parsed
- * against admits exactly the parts a renderer would draw.
- */
-type PartShape<T extends RecordFieldType> = {
-  [K in keyof DeclaredParts<T>]: ReturnType<
-    typeof clearable<(typeof PART_TYPES)[DeclaredParts<T>[K] & PartType]>
-  >;
-};
-
 /**
  * What a type's rule must parse a value to, by shape: a string for a scalar, and a string per
  * declared part for a record. Storage keeps one string per part, so a rule parsing to anything else
@@ -285,18 +273,22 @@ type ValueOfShape<T extends FieldType> = {
   record: { [P in PartsOf<T>]?: string };
 }[ShapeOf<T>];
 
-export interface FieldTypeDefinition<T extends FieldType = FieldType> {
+/**
+ * A type's rule, held to the layout its shape declares. A record's rule comes from `record()` for
+ * that same type, which records the type it was built for, so one record type can't be given
+ * another's rule.
+ */
+export type FieldTypeDefinition<T extends FieldType = FieldType> = {
   value: z.ZodType<ValueOfShape<T>>;
-}
+} & (ShapeOf<T> extends 'record' ? { builtFor: T } : unknown);
 
 /**
- * Every type states the rule its value follows, held to what its shape lays out. The mapped
- * type is what makes that exhaustive: an id added to `FIELD_TYPE_IDS` fails to compile until
- * it is declared here, and a rule that parses to another shape fails to compile here too.
+ * Returns its argument. Its parameter type is what requires a rule for every type and holds each
+ * rule to its type's shape.
  */
-function defineFieldTypes<D extends { [T in FieldType]: FieldTypeDefinition<T> }>(
-  declarations: D,
-): D {
+function defineFieldTypes(declarations: { [T in FieldType]: FieldTypeDefinition<T> }): {
+  [T in FieldType]: FieldTypeDefinition<T>;
+} {
   return declarations;
 }
 
@@ -316,12 +308,11 @@ function record<T extends RecordFieldType>(type: T, { error }: { error: string }
   // structure a renderer draws and the rules a server enforces from drifting apart.
   const declared: Readonly<Record<string, PartType>> = FIELD_STRUCTURES[type].parts;
 
-  // Restated for the type system, which loses the key-to-part mapping through
-  // `Object.fromEntries`. Without it the parsed value widens to a string-keyed record,
-  // and a caller could name a part that compiles and is then refused at runtime.
+  // The keys here are plain strings. The parsed value's type comes from the record's declared shape
+  // in `defineFieldTypes`, which names every part.
   const shape = Object.fromEntries(
     Object.entries(declared).map(([key, partType]) => [key, clearable(partSchemas[partType])]),
-  ) as PartShape<T>;
+  );
 
   // Strict, so a part nobody declared is refused rather than dropped. That refusal keeps
   // zod's wording, which names the offending key.
@@ -329,11 +320,11 @@ function record<T extends RecordFieldType>(type: T, { error }: { error: string }
     .strictObject(shape)
     .refine((parts) => Object.values(parts).some((entry) => typeof entry === 'string'), { error });
 
-  return { value };
+  return { value, builtFor: type };
 }
 
-// Not exported: a value is checked against its field through `valueSchemaFor`, which is the
-// one place a rule depending on how a field is set up can be added.
+// Not exported, so every value is checked through `valueSchemaFor`, the one place a rule that
+// depends on a field's own setup can be added.
 const FIELD_TYPES = defineFieldTypes({
   short_text: { value: PART_TYPES.short_text },
   long_text: { value: longText() },
@@ -356,7 +347,7 @@ const FIELD_TYPES = defineFieldTypes({
 export function valueSchemaFor<T extends FieldType>(field: {
   type: T;
 }): (typeof FIELD_TYPES)[T]['value'] {
-  if (!Object.prototype.hasOwnProperty.call(FIELD_TYPES, field.type)) {
+  if (!isFieldType(field.type)) {
     // A native error, because this package depends on nothing but zod.
     // oxlint-disable-next-line ghost/ghost-custom/no-native-error
     throw new Error(`Unknown field type: ${field.type}`);

@@ -276,7 +276,9 @@ export function buildMemberFieldEditPayload(
 }
 
 /**
- * A value exactly as the save will send it, or undefined for one that clears the field.
+ * The value the save sends, or undefined when the save clears the field. Validation checks this
+ * same value rather than the one on display: the editor keeps an emptied address part so the save
+ * can clear it, and the displayed value drops it.
  *
  * A value of another shape than its field's is passed through unchanged, so the field's rule
  * refuses it rather than the save treating it as a clear and deleting what the member holds.
@@ -353,6 +355,17 @@ export function getCustomFieldValidationErrors(
   return errors;
 }
 
+const ServerErrors = z.object({ data: z.object({ errors: z.array(z.unknown()) }) });
+
+/**
+ * Each reported error is parsed on its own, so one this build can't read doesn't hide the others.
+ */
+const ServerError = z.object({
+  property: z.string().nullish(),
+  context: z.string().nullish(),
+  message: z.string().nullish(),
+});
+
 /**
  * Field-level errors from a failed member save. The server reports one error per offending
  * field: `property` holds the field's address — container, namespace, key, and for a
@@ -361,20 +374,10 @@ export function getCustomFieldValidationErrors(
  * other failure shape so callers can fall back to a generic toast.
  */
 export function parseCustomFieldServerErrors(error: unknown): Record<string, string> | undefined {
-  const data = (
-    error as {
-      data?: {
-        errors?: Array<{
-          property?: string | null;
-          context?: string | null;
-          message?: string | null;
-        }>;
-      };
-    } | null
-  )?.data;
+  const reported = ServerErrors.safeParse(error).data?.data.errors ?? [];
   const errors: Record<string, string> = {};
   const qualified = `${QUALIFIER}${SEPARATOR}`;
-  for (const apiError of data?.errors ?? []) {
+  for (const apiError of reported.flatMap((raw) => ServerError.safeParse(raw).data ?? [])) {
     if (apiError.property?.startsWith(qualified)) {
       errors[apiError.property.slice(qualified.length)] =
         apiError.context || apiError.message || 'Invalid value.';

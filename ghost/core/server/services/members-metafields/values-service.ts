@@ -98,14 +98,13 @@ interface Refusal {
  * `errorDetails`, which the renderer already passes through as `details`, so a client
  * that wants to mark every refused input can have them all from one attempt.
  */
-function refusalError(refusals: Refusal[]): errors.ValidationError {
-  const [first, ...rest] = refusals as [Refusal, ...Refusal[]];
+function refusalError(first: Refusal, rest: Refusal[]): errors.ValidationError {
   return new errors.ValidationError({
     message: first.message,
     property: first.property,
     // Omitted when there is nothing more to say, so the common single refusal keeps the
     // shape it has always had rather than growing a one-element list.
-    ...(rest.length > 0 ? { errorDetails: refusals } : {}),
+    ...(rest.length > 0 ? { errorDetails: [first, ...rest] } : {}),
   });
 }
 
@@ -237,7 +236,7 @@ export class MetafieldValuesService {
     }
     const rows = await this.fields
       .definitions(this.knex, { audience, status: ACTIVE_ONLY })
-      .where((query) => {
+      .read.where((query) => {
         for (const [namespace, keys] of keysByNamespace) {
           query.orWhere((inNamespace) =>
             inNamespace.where('namespace', namespace).whereIn('key', keys),
@@ -387,21 +386,21 @@ export class MetafieldValuesService {
     if (input === undefined) {
       return undefined;
     }
-    if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    if (!isRecordValue(input)) {
       throw new errors.ValidationError({
         message: 'Metafields must be an object keyed by namespace.',
         property: QUALIFIER,
       });
     }
     const identified: Record<string, unknown> = {};
-    for (const [namespace, values] of Object.entries(input as Record<string, unknown>)) {
-      if (typeof values !== 'object' || values === null || Array.isArray(values)) {
+    for (const [namespace, values] of Object.entries(input)) {
+      if (!isRecordValue(values)) {
         throw new errors.ValidationError({
           message: 'Metafield values must be an object keyed by field key.',
           property: [QUALIFIER, namespace].join(SEPARATOR),
         });
       }
-      for (const [key, raw] of Object.entries(values as Record<string, unknown>)) {
+      for (const [key, raw] of Object.entries(values)) {
         // Joined as text, not written by the codec: these segments are unchecked, and a write
         // naming a field that cannot exist is refused under the name it gave.
         identified[[namespace, key].join(SEPARATOR)] = raw;
@@ -480,8 +479,9 @@ export class MetafieldValuesService {
       writes.push({ field, value: value.data });
     }
 
-    if (refusals.length > 0) {
-      throw refusalError(refusals);
+    const [first, ...rest] = refusals;
+    if (first) {
+      throw refusalError(first, rest);
     }
 
     return writes;

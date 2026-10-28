@@ -119,14 +119,20 @@ export type ShapeHandlers<R> = {
 };
 
 /**
- * A type's structure, or nothing for a type this build has never heard of, which an
- * integration built against an older package than the site it talks to can be handed. Asked
- * of the catalog's own entries, so a name every object has, such as `constructor`, is not one.
+ * Whether a value names a type this build knows. A site newer than an integration can send a type
+ * the integration doesn't know, so check a type from the wire with this first. `constructor` and
+ * other names every object has are not types.
+ */
+export function isFieldType(value: unknown): value is FieldType {
+  return FIELD_TYPE_IDS.some((id) => id === value);
+}
+
+/**
+ * The type's structure, or undefined for a type this build doesn't know, which a plain JavaScript
+ * caller can still pass.
  */
 function structureOf(type: FieldType): FieldStructure | undefined {
-  return Object.prototype.hasOwnProperty.call(FIELD_STRUCTURES, type)
-    ? FIELD_STRUCTURES[type]
-    : undefined;
+  return isFieldType(type) ? FIELD_STRUCTURES[type] : undefined;
 }
 
 /**
@@ -174,18 +180,16 @@ function declaredParts(type: FieldType): Readonly<Record<string, PartType>> | nu
 }
 
 /**
- * The parts of a record type in declaration order, or null for a type with none.
- *
- * Typed to the parts the caller's type declares, so a caller holding one of these can
- * index a value of that type without restating which parts exist.
+ * A record type's parts in declaration order, or null for a type with none. Parts are plain strings
+ * here; `FIELD_STRUCTURES[type].parts` gives one type's parts with typed keys.
  */
-export function partsOf<T extends FieldType>(type: T): PartsOf<T>[] | null {
+export function partsOf(type: FieldType): string[] | null {
   const parts = declaredParts(type);
-  return parts ? (Object.keys(parts) as PartsOf<T>[]) : null;
+  return parts ? Object.keys(parts) : null;
 }
 
 /** Each part's declared type, keyed by part; null for a type with none, and for one this build has never heard of. */
-export function partTypesOf<T extends FieldType>(type: T): Record<PartsOf<T>, PartType> | null {
+export function partTypesOf(type: FieldType): Readonly<Record<string, PartType>> | null {
   const parts = declaredParts(type);
-  return parts ? ({ ...parts } as Record<PartsOf<T>, PartType>) : null;
+  return parts ? { ...parts } : null;
 }

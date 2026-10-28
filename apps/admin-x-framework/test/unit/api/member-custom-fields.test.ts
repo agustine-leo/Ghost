@@ -224,7 +224,8 @@ describe('member custom fields api helpers', () => {
     // the catalog rather than against a hardcoded list, so it keeps holding as the
     // catalog grows.
     it('includes every part a type declares, in the order it declares them', () => {
-      const parts = memberCustomFieldParts('address')!;
+      const parts = memberCustomFieldParts('address') ?? [];
+      expect(parts.length).toBeGreaterThan(0);
       const value = Object.fromEntries(parts.map(({ key }) => [key, key]));
 
       const line = formatMemberCustomFieldValue('address', value);

@@ -31,7 +31,7 @@ import {
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { IdentityTextSchema } from '@tryghost/metafield-types/identity';
-import { isRecordValue, matchShape } from '@tryghost/metafield-types/structure';
+import { isRecordValue, matchShape, type PartsOf } from '@tryghost/metafield-types/structure';
 import { partOf } from '@/members/custom-fields/addressing';
 import {
   formatMemberCustomFieldValue,
@@ -102,9 +102,9 @@ const CountryInput: React.FC<{
   );
 };
 
-// The parts of the address composite, in the order its value schema declares them, each
-// with the label every other surface shows it under.
 const ADDRESS_PARTS = memberCustomFieldParts('address') ?? [];
+
+const FULL_ROW_PARTS: readonly PartsOf<'address'>[] = ['line1', 'line2'];
 
 // The address composite: one input per part in a two-column sub-grid. The
 // street lines take a full row, since they are the long parts, and the short
@@ -127,7 +127,7 @@ const AddressInput: React.FC<{
             key={part}
             className={cn(
               'flex flex-col gap-1.5',
-              (part === 'line1' || part === 'line2') && 'md:col-span-2',
+              FULL_ROW_PARTS.some((wide) => wide === part) && 'md:col-span-2',
             )}
           >
             <Label htmlFor={partId}>{label}</Label>

@@ -81,7 +81,7 @@ describe('custom field value storage', function () {
         ]),
         { city: 'London' },
       );
-      assert.equal(({} as Record<string, unknown>).polluted, undefined);
+      assert.equal('polluted' in {}, false);
     });
 
     it('rebuilds what the rows describe when one path is a part of another', function () {
