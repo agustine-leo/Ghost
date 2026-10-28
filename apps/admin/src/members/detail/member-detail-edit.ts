@@ -1,32 +1,19 @@
 import moment from 'moment-timezone';
 import validator from 'validator';
 import { z } from 'zod';
-import {
-  IdentitySchema,
-  PartSchema,
-  QUALIFIER,
-  SEPARATOR,
-} from '@tryghost/metafield-types/identity';
+import { PartSchema, QUALIFIER, SEPARATOR } from '@tryghost/metafield-types/identity';
+import { isRecordValue, matchShape } from '@tryghost/metafield-types/structure';
 import {
   MEMBER_CUSTOM_FIELD_TYPES,
   memberCustomFieldIdentity,
-  memberCustomFieldParts,
 } from '@tryghost/admin-x-framework/api/member-custom-fields';
 import { dequal } from 'dequal';
 import type { EditMemberData, Member } from '@tryghost/admin-x-framework/api/members';
-import type {
-  MemberCustomField,
-  MemberCustomFieldAddress,
-} from '@tryghost/admin-x-framework/api/member-custom-fields';
+import type { MemberCustomField } from '@tryghost/admin-x-framework/api/member-custom-fields';
 
-// The parts of the address composite, in the order its value schema declares them, each
-// with the label every other surface shows it under.
-export const ADDRESS_PARTS = memberCustomFieldParts('address') ?? [];
+export type EditableRecordValue = Partial<Record<string, string>>;
 
-// Partial because a draft mid-edit (or a normalized sparse value) may hold any subset; the
-// shared AddressValue schema — enforced by the server — decides completeness.
-export type EditableAddressValue = Partial<MemberCustomFieldAddress>;
-export type EditableCustomFieldValue = string | EditableAddressValue;
+export type EditableCustomFieldValue = string | EditableRecordValue;
 
 export interface MemberEditableLabel {
   name: string;
@@ -79,66 +66,65 @@ export function getMemberEditableSlice(member: MemberFieldSource): MemberEditabl
   };
 }
 
-export function getEditableCustomFieldValues(
-  metafields: Record<string, Record<string, unknown> | undefined> | null | undefined,
-): Record<string, EditableCustomFieldValue> {
-  const flattened: Record<string, unknown> = {};
-  for (const [namespace, records] of Object.entries(metafields ?? {})) {
-    for (const [key, fieldValue] of Object.entries(records ?? {})) {
-      // A name no field could have is one no field on the page reads from.
-      const field = IdentitySchema.safeParse({ namespace, key });
-      if (field.success) {
-        flattened[memberCustomFieldIdentity(field.data)] = fieldValue;
-      }
+export function emptyEditableValue(
+  field: Pick<MemberCustomField, 'type'>,
+): EditableCustomFieldValue {
+  return matchShape<EditableCustomFieldValue>(field.type, {
+    scalar: () => '',
+    record: () => ({}),
+  });
+}
+
+/** Each declared part's text, trimmed. A part the value holds no text for is left out. */
+function trimmedParts(
+  parts: Readonly<Record<string, unknown>>,
+  value: Record<string, unknown>,
+): EditableRecordValue {
+  const record: EditableRecordValue = {};
+  for (const part of Object.keys(parts)) {
+    const held = value[part];
+    if (typeof held === 'string') {
+      record[part] = held.trim();
     }
   }
-  const values: Record<string, EditableCustomFieldValue> = {};
-  for (const [key, value] of Object.entries(flattened)) {
-    if (typeof value === 'string' && value.trim() !== '') {
-      values[key] = value.trim();
-    } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      const address = normalizeAddressValue(value as Record<string, unknown>);
-      if (address) {
-        values[key] = address;
+  return record;
+}
+
+/**
+ * The value trimmed and with empty parts dropped, or undefined when nothing is left, so a value of
+ * only blanks counts as no value whatever its shape.
+ */
+export function editableValueOf(
+  field: Pick<MemberCustomField, 'type'>,
+  value: unknown,
+): EditableCustomFieldValue | undefined {
+  return matchShape<EditableCustomFieldValue | undefined>(field.type, {
+    scalar: () => (typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined),
+    record: ({ parts }) => {
+      if (!isRecordValue(value)) {
+        return undefined;
       }
+      const record = Object.fromEntries(
+        Object.entries(trimmedParts(parts, value)).filter(([, held]) => held !== ''),
+      );
+      return Object.keys(record).length ? record : undefined;
+    },
+  });
+}
+
+/** Keyed by each field's identity. A field with no value is left out. */
+export function getEditableCustomFieldValues(
+  metafields: Record<string, Record<string, unknown> | undefined> | null | undefined,
+  fields: readonly MemberCustomField[],
+): Record<string, EditableCustomFieldValue> {
+  const values: Record<string, EditableCustomFieldValue> = {};
+  for (const field of fields) {
+    const value = editableValueOf(field, metafields?.[field.namespace]?.[field.key]);
+    if (value !== undefined) {
+      values[memberCustomFieldIdentity(field)] = value;
     }
   }
   return values;
-}
-
-/**
- * An address as the save should send it: every part the editor showed, trimmed, keeping
- * the empty ones.
- *
- * A write touches the parts it names, so a part the person emptied has to be named — sent
- * as empty rather than left out, which would read as "no change". An address with nothing
- * left in it is a cleared field, which the caller says with `null` instead.
- */
-function addressToSave(value: Record<string, unknown>): EditableAddressValue | undefined {
-  const address: EditableAddressValue = {};
-  for (const { key } of ADDRESS_PARTS) {
-    const subvalue = value[key];
-    if (typeof subvalue === 'string') {
-      address[key] = subvalue.trim();
-    }
-  }
-  return Object.values(address).some((part) => part !== '') ? address : undefined;
-}
-
-/**
- * An address value reduced to its known parts, trimmed, with empty
- * parts dropped. Undefined when nothing remains, so an all-blank address
- * normalizes to "no value" exactly like an empty string does.
- */
-function normalizeAddressValue(value: Record<string, unknown>): EditableAddressValue | undefined {
-  const address: EditableAddressValue = {};
-  for (const { key } of ADDRESS_PARTS) {
-    const subvalue = value[key];
-    if (typeof subvalue === 'string' && subvalue.trim() !== '') {
-      address[key] = subvalue.trim();
-    }
-  }
-  return Object.keys(address).length ? address : undefined;
 }
 
 /**
@@ -292,15 +278,26 @@ export function buildMemberFieldEditPayload(
 /**
  * A value exactly as the save will send it, or undefined for one that clears the field.
  *
- * One statement of that, because validating anything else is validating a value nobody
- * sends: the editor keeps an emptied address part so the save can name it, while the
- * display form drops it, and a check run against the second cannot see what the first
- * would be told about.
+ * A value of another shape than its field's is passed through unchanged, so the field's rule
+ * refuses it rather than the save treating it as a clear and deleting what the member holds.
  */
 function customFieldValueToSave(
+  field: Pick<MemberCustomField, 'type'>,
   value: EditableCustomFieldValue,
 ): EditableCustomFieldValue | undefined {
-  return typeof value === 'string' ? value.trim() || undefined : addressToSave(value);
+  return matchShape<EditableCustomFieldValue | undefined>(field.type, {
+    scalar: () => (typeof value === 'string' ? value.trim() || undefined : value),
+    // A write changes only the parts it names, so an emptied part has to be sent as an empty
+    // string; leaving it out would leave it unchanged. A record with nothing left in it clears the
+    // whole field, which the caller sends as `null`.
+    record: ({ parts }) => {
+      if (typeof value === 'string') {
+        return value;
+      }
+      const record = trimmedParts(parts, value);
+      return Object.values(record).some((part) => part !== '') ? record : undefined;
+    },
+  });
 }
 
 /**
@@ -310,12 +307,14 @@ function customFieldValueToSave(
  */
 export function buildCustomFieldSavePayload(
   memberId: string,
-  field: { namespace: string; key: string },
+  field: Pick<MemberCustomField, 'namespace' | 'key' | 'type'>,
   value: EditableCustomFieldValue,
 ): EditMemberData {
   return {
     id: memberId,
-    metafields: { [field.namespace]: { [field.key]: customFieldValueToSave(value) ?? null } },
+    metafields: {
+      [field.namespace]: { [field.key]: customFieldValueToSave(field, value) ?? null },
+    },
   };
 }
 
@@ -339,7 +338,7 @@ export function getCustomFieldValidationErrors(
     // Checked as the save would send it, so what passes here is what the server is
     // asked to accept. A value that clears the field is always valid: no field is
     // required, and a clear says nothing for a rule to be about.
-    const value = draft === undefined ? undefined : customFieldValueToSave(draft);
+    const value = draft === undefined ? undefined : customFieldValueToSave(field, draft);
     if (value === undefined) {
       continue;
     }

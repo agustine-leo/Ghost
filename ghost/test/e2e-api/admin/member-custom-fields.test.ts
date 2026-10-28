@@ -1570,6 +1570,59 @@ describe('Member Custom Fields Admin API', function () {
       assert.deepEqual(await readValues(memberId), { [good.key]: 'Ghosts' });
     });
 
+    it('omits a stored value laid out as another shape than its type declares', async function () {
+      // No write through the API stores parts under a text field, so these rows are inserted
+      // directly.
+      const good = await createField({ name: 'Favourite topic' });
+      const stray = await createField({ name: 'Nickname' });
+      const memberId = await createMember();
+      await setValues(memberId, { [good.key]: 'Ghosts', [stray.key]: 'Bex' });
+
+      await models.Base.knex('members_metafield_values')
+        .where({ metafield_key: stray.key, member_id: memberId })
+        .update({ path: 'first' });
+
+      assert.deepEqual(await readValues(memberId), { [good.key]: 'Ghosts' });
+    });
+
+    it('omits a stored record holding a part its type does not lay out', async function () {
+      // No write through the API stores a nested part, or a part the type doesn't declare, so these
+      // rows are inserted directly.
+      const good = await createField({ name: 'Favourite topic' });
+      const nested = await createField({ name: 'Home address', type: 'address' });
+      const undeclared = await createField({ name: 'Work address', type: 'address' });
+      const memberId = await createMember();
+      await setValues(memberId, {
+        [good.key]: 'Ghosts',
+        [nested.key]: { city: 'London', country: 'GB' },
+        [undeclared.key]: { city: 'Leeds', country: 'GB' },
+      });
+
+      const rowsOf = (key: string) =>
+        models.Base.knex('members_metafield_values').where({
+          metafield_key: key,
+          member_id: memberId,
+          path: 'city',
+        });
+      await rowsOf(nested.key).update({ path: 'city.district' });
+      await rowsOf(undeclared.key).update({ path: 'county' });
+
+      assert.deepEqual(await readValues(memberId), { [good.key]: 'Ghosts' });
+    });
+
+    it('reads a member whose only stored value is unreadable as holding none', async function () {
+      const stray = await createField({ name: 'Nickname' });
+      const memberId = await createMember();
+      await setValues(memberId, { [stray.key]: 'Bex' });
+
+      await models.Base.knex('members_metafield_values')
+        .where({ metafield_key: stray.key, member_id: memberId })
+        .update({ path: 'first' });
+
+      const { body } = await agent.get(`members/${memberId}/`).expectStatus(200);
+      assert.equal(Object.hasOwn(body.members[0], 'metafields'), false);
+    });
+
     it('creates a member with their values in one request', async function () {
       const field = await createField({ name: 'Favourite topic' });
 

@@ -21,8 +21,9 @@ import {
 import { LucideIcon, cn } from '@tryghost/shade/utils';
 import { dequal } from 'dequal';
 import {
-  ADDRESS_PARTS,
   buildCustomFieldSavePayload,
+  editableValueOf,
+  emptyEditableValue,
   getCustomFieldValidationErrors,
   getEditableCustomFieldValues,
   parseCustomFieldServerErrors,
@@ -30,16 +31,18 @@ import {
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { IdentityTextSchema } from '@tryghost/metafield-types/identity';
+import { isRecordValue, matchShape } from '@tryghost/metafield-types/structure';
 import { partOf } from '@/members/custom-fields/addressing';
 import {
   formatMemberCustomFieldValue,
   memberCustomFieldIdentity,
+  memberCustomFieldParts,
   userTypeForField,
 } from '@tryghost/admin-x-framework/api/member-custom-fields';
 import { useCustomFieldDefinitions } from '@/shared/member-custom-fields/use-definitions';
 import { countryName, countryOptions } from '@tryghost/admin-x-framework/utils/countries';
 import { useEditMember } from '@tryghost/admin-x-framework/api/members';
-import type { EditableAddressValue, EditableCustomFieldValue } from './member-detail-edit';
+import type { EditableCustomFieldValue, EditableRecordValue } from './member-detail-edit';
 import type { MemberCustomField } from '@tryghost/admin-x-framework/api/member-custom-fields';
 
 interface MemberCustomFieldsFieldProps {
@@ -99,16 +102,20 @@ const CountryInput: React.FC<{
   );
 };
 
+// The parts of the address composite, in the order its value schema declares them, each
+// with the label every other surface shows it under.
+const ADDRESS_PARTS = memberCustomFieldParts('address') ?? [];
+
 // The address composite: one input per part in a two-column sub-grid. The
 // street lines take a full row, since they are the long parts, and the short
 // parts pair up, the same way Portal's account settings lay an address out.
 const AddressInput: React.FC<{
   inputId: string;
-  value: EditableAddressValue;
+  value: EditableRecordValue;
   // Messages keyed by part (`line1`, `postal_code`, …).
   errors?: Record<string, string>;
   disabled?: boolean;
-  onChange: (value: EditableAddressValue) => void;
+  onChange: (value: EditableRecordValue) => void;
 }> = ({ inputId, value, errors, disabled, onChange }) => {
   return (
     <div className="grid gap-x-4 gap-y-3 md:grid-cols-2">
@@ -199,7 +206,7 @@ const CustomFieldInput: React.FC<{
           disabled={disabled}
           errors={errors}
           inputId={inputId}
-          value={typeof value === 'object' && value !== null ? value : {}}
+          value={isRecordValue(value) ? value : {}}
           onChange={onChange}
         />
       );
@@ -223,9 +230,8 @@ const MemberCustomFieldEditModal: React.FC<{
   initialValue: EditableCustomFieldValue | undefined;
   onClose: () => void;
 }> = ({ memberId, field, initialValue, onClose }) => {
-  const isAddressField = userTypeForField(field).input === 'address';
   const [value, setValue] = React.useState<EditableCustomFieldValue>(
-    initialValue ?? (isAddressField ? {} : ''),
+    initialValue ?? emptyEditableValue(field),
   );
   const [saveAttempted, setSaveAttempted] = React.useState(false);
   const [serverErrors, setServerErrors] = React.useState<Record<string, string> | undefined>();
@@ -248,10 +254,7 @@ const MemberCustomFieldEditModal: React.FC<{
   // Pristine editors dismiss freely (outside click, Escape); a dirty one
   // refuses casual dismissal — Cancel is the one explicit way to discard,
   // so typed values can never be lost by a stray click.
-  const isDirty = !dequal(
-    getEditableCustomFieldValues({ [field.namespace]: { [field.key]: value } }),
-    getEditableCustomFieldValues({ [field.namespace]: { [field.key]: initialValue } }),
-  );
+  const isDirty = !dequal(editableValueOf(field, value), editableValueOf(field, initialValue));
 
   const onSave = () => {
     if (editMutation.isPending) {
@@ -314,9 +317,9 @@ const MemberCustomFieldEditModal: React.FC<{
         </DialogHeader>
         <div className="flex flex-col gap-1.5">
           {/* The dialog title names the field visually; this gives the
-                        scalar control a real label association (address parts
+                        scalar control a real label association (a record's parts
                         carry their own labels). */}
-          {!isAddressField && (
+          {matchShape(field.type, { scalar: () => true, record: () => false }) && (
             <Label className="sr-only" htmlFor={inputId}>
               {field.name}
             </Label>
@@ -370,7 +373,7 @@ const MemberCustomFieldsField: React.FC<MemberCustomFieldsFieldProps> = ({
 }) => {
   const { data, isLoading } = useCustomFieldDefinitions();
   const fields = data ?? [];
-  const values = getEditableCustomFieldValues(metafields);
+  const values = getEditableCustomFieldValues(metafields, fields);
   const [editingField, setEditingField] = React.useState<MemberCustomField | null>(null);
 
   if (isLoading || fields.length === 0) {

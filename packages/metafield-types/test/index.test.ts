@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'vitest';
 import {
+  FIELD_STRUCTURES,
   FIELD_TYPES,
   FIELD_TYPE_IDS,
   MAX_LONG_TEXT_BYTES,
   isMetafieldChangeSource,
+  isRecordValue,
+  matchShape,
   partTypesOf,
   partsOf,
   type Address,
@@ -23,22 +26,64 @@ describe('metafield-types catalog', function () {
   // site refuses. New structure is a new type. Add a type here once it has shipped.
   it('never changes a type once it has shipped', function () {
     const shipped = {
-      short_text: null,
-      long_text: null,
+      short_text: { shape: 'scalar', kind: 'text' },
+      long_text: { shape: 'scalar', kind: 'text' },
       address: {
-        line1: 'short_text',
-        line2: 'short_text',
-        city: 'short_text',
-        state: 'short_text',
-        postal_code: 'postal_code',
-        country: 'country_code',
+        shape: 'record',
+        parts: {
+          line1: 'short_text',
+          line2: 'short_text',
+          city: 'short_text',
+          state: 'short_text',
+          postal_code: 'postal_code',
+          country: 'country_code',
+        },
       },
     };
 
-    for (const [type, parts] of Object.entries(shipped)) {
+    for (const [type, structure] of Object.entries(shipped)) {
       assert.ok(FIELD_TYPE_IDS.includes(type as FieldType), `${type} still exists`);
-      assert.deepEqual(partTypesOf(type as FieldType), parts, `${type} keeps its parts`);
+      assert.deepEqual(
+        FIELD_STRUCTURES[type as FieldType],
+        structure,
+        `${type} keeps its structure`,
+      );
     }
+  });
+
+  it('answers for each type by the shape it declares', function () {
+    const layout = (type: FieldType) =>
+      matchShape(type, {
+        scalar: ({ kind }) => `one ${kind} value`,
+        record: ({ parts }) => `parts ${Object.keys(parts).join(', ')}`,
+      });
+
+    assert.equal(layout('long_text'), 'one text value');
+    assert.equal(layout('address'), 'parts line1, line2, city, state, postal_code, country');
+  });
+
+  it('refuses to answer for a type it has never heard of, naming it', function () {
+    // Only reachable by lying about the type, as an integration built against an older
+    // package does when it passes along a type off the wire instead of skipping it.
+    // A name every object has is no more a type than any other.
+    for (const type of ['a_type_from_the_future', 'constructor']) {
+      assert.throws(
+        () => matchShape(type as FieldType, { scalar: () => 1, record: () => 2 }),
+        new RegExp(`Unknown field type: ${type}`),
+      );
+    }
+  });
+
+  it('tells a record value by its layout, so a list or nothing is not one', function () {
+    assert.equal(isRecordValue({ city: 'London' }), true);
+    assert.equal(isRecordValue(['London']), false);
+    assert.equal(isRecordValue(null), false);
+    assert.equal(isRecordValue('London'), false);
+  });
+
+  it("names each part's type, and none for a type without parts", function () {
+    assert.deepEqual(partTypesOf('address'), FIELD_STRUCTURES.address.parts);
+    assert.equal(partTypesOf('short_text'), null);
   });
 
   it('reads a type it has never heard of as having no parts', function () {

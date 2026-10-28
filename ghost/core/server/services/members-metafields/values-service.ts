@@ -5,8 +5,10 @@ import type { Knex } from 'knex';
 import { z } from 'zod';
 import {
   FIELD_TYPES,
-  partsOf,
+  isRecordValue,
+  matchShape,
   type FieldType,
+  type FieldValue,
   type MetafieldChangeEventField,
 } from '@tryghost/metafield-types';
 import {
@@ -42,7 +44,7 @@ import {
   type FieldSource,
 } from './queries';
 import { canWrite, type Audience, type MemberAccess } from './access';
-import { valueRowsToWrite, valuesFromRows, type StoredValueRow } from './storage';
+import { valueRowsToWrite, valuesFromRows } from './storage';
 
 const VALUES_TABLE = 'members_metafield_values';
 const CHANGE_EVENTS_TABLE = 'members_metafield_change_events';
@@ -127,7 +129,7 @@ interface AllowedField {
 /** An absent `value` means clear the field. */
 export interface PlannedWrite {
   field: AllowedField;
-  value?: unknown;
+  value?: FieldValue;
 }
 
 /** Checked writes and who is making them: everything needed to store them. */
@@ -144,6 +146,45 @@ const IMPORTED: Extract<WriteOrigin, { source: 'import' }> = {
   writtenBy: { type: 'import', id: null },
   source: 'import',
 };
+
+/**
+ * Whether a write of `raw` clears the whole field. The caller handles `null`, which clears any
+ * field; `''` clears a scalar. For a record `''` names no part, so it goes on to fail validation
+ * rather than being read as a delete.
+ */
+function clearsWhole(type: FieldType, raw: unknown): boolean {
+  return matchShape(type, {
+    scalar: () => raw === '',
+    record: () => false,
+  });
+}
+
+/**
+ * The field's value in the layout its type declares, or undefined when the rows add up to anything
+ * else, such as a record with no parts or with a part its type doesn't declare. No write through
+ * this service stores such rows, and a client couldn't draw the result.
+ *
+ * Only the layout is checked, not the type's rule, so tightening a rule later never hides values
+ * members already hold.
+ */
+function storedValueAs(type: FieldType, tree: unknown): unknown {
+  return matchShape<unknown>(type, {
+    scalar: () => (typeof tree === 'string' ? tree : undefined),
+    record: ({ parts }) => {
+      if (!isRecordValue(tree)) {
+        return undefined;
+      }
+      const held = Object.entries(tree);
+      const laidOut =
+        held.length > 0 &&
+        held.every(
+          ([part, value]) =>
+            Object.prototype.hasOwnProperty.call(parts, part) && typeof value === 'string',
+        );
+      return laidOut ? tree : undefined;
+    },
+  });
+}
 
 /**
  * What a member holds for each defined field. Separate from the definitions service
@@ -286,7 +327,7 @@ export class MetafieldValuesService {
         `${VALUES_TABLE}.value_text`,
       );
 
-    const stored: StoredValueRow[] = [];
+    const stored: z.output<typeof DbStoredValueRow>[] = [];
     for (const row of rows) {
       try {
         stored.push(DbStoredValueRow.parse(row));
@@ -304,7 +345,30 @@ export class MetafieldValuesService {
       }
     }
 
-    return valuesFromRows(stored);
+    // Counted per field and logged once, because one read can cover a whole list or export, and a
+    // field with stray rows would otherwise log once per member.
+    const misshapen = new Map<string, { namespace: string; key: string; members: number }>();
+    const values = valuesFromRows(stored, ({ namespace, key, type }, tree) => {
+      const value = storedValueAs(type, tree);
+      if (value === undefined) {
+        const identity = [namespace, key].join(SEPARATOR);
+        const counted = misshapen.get(identity) ?? { namespace, key, members: 0 };
+        misshapen.set(identity, { ...counted, members: counted.members + 1 });
+      }
+      return value;
+    });
+    for (const { namespace, key, members } of misshapen.values()) {
+      logging.warn(
+        {
+          event: { name: 'members.metafields.value_misshapen' },
+          metafieldNamespace: namespace,
+          metafieldKey: key,
+          members,
+        },
+        'Skipping metafield values stored as another shape than their type',
+      );
+    }
+    return values;
   }
 
   private parseValues(input: unknown): Record<string, unknown> {
@@ -392,10 +456,7 @@ export class MetafieldValuesService {
         continue;
       }
 
-      // `null` clears any field, and `''` clears one with no parts. For a value
-      // with parts `''` names nothing, so it is left to fail validation rather than
-      // being read as a silent delete.
-      if (raw === null || (raw === '' && partsOf(field.type) === null)) {
+      if (raw === null || clearsWhole(field.type, raw)) {
         writes.push({ field });
         continue;
       }

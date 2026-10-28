@@ -1,12 +1,11 @@
 import {
-  FIELD_TYPES,
   FIELD_TYPE_IDS,
   MetafieldDefinitionSchema,
+  isRecordValue,
+  matchShape,
   type MemberAccess,
   type MetafieldDefinition,
-  partTypesOf,
   partsOf,
-  type FieldKind,
   type FieldType,
   type PartType,
   type PartsOf,
@@ -26,7 +25,6 @@ export { isMetafieldColumn } from '@tryghost/metafield-csv';
 // catalog package — the framework is their surface for everything custom-fields.
 export type { Address as MemberCustomFieldAddress } from '@tryghost/metafield-types';
 export { FIELD_TYPES as MEMBER_CUSTOM_FIELD_TYPES } from '@tryghost/metafield-types';
-export { FIELD_KINDS as MEMBER_CUSTOM_FIELD_KINDS } from '@tryghost/metafield-types';
 export type { FieldKind as MemberCustomFieldKind } from '@tryghost/metafield-types';
 
 /**
@@ -218,25 +216,14 @@ export type MemberCustomFieldPart<T extends FieldType = FieldType> = {
  */
 export const memberCustomFieldParts = <T extends FieldType>(
   type: T,
-): MemberCustomFieldPart<T>[] | null => {
-  const partKeys = partsOf(type);
-  const partTypes = partTypesOf(type);
-  if (!partKeys || !partTypes) {
-    return null;
-  }
-  const labels = partLabelsFor(type);
-  return partKeys.map((key) => ({ key, label: labels[key], type: partTypes[key] }));
-};
-
-/**
- * A value as the record of parts a composite reads from, and nothing otherwise.
- *
- * A predicate rather than an assertion: the same checks either way, but this one hands
- * the narrowing to the compiler rather than overriding it, so a formatter below cannot be
- * reached by a value nobody looked at.
- */
-const isPartRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+): MemberCustomFieldPart<T>[] | null =>
+  matchShape<MemberCustomFieldPart<T>[] | null>(type, {
+    scalar: () => null,
+    record: ({ parts }) => {
+      const labels = partLabelsFor(type);
+      return (partsOf(type) ?? []).map((key) => ({ key, label: labels[key], type: parts[key] }));
+    },
+  });
 
 /**
  * Parts that read as one run rather than as separate items — "NY 00001", not "NY, 00001".
@@ -307,36 +294,33 @@ const partRuns = Object.fromEntries(
  * from text. Callers own their own placeholder, since "no value" reads differently in a
  * table cell than in a detail row.
  */
-export const formatMemberCustomFieldValue = (type: FieldType, value: unknown): string => {
-  // Null for a scalar, which reads as text or as nothing.
-  if (partsOf(type) === null) {
-    return typeof value === 'string' ? value : '';
-  }
+export const formatMemberCustomFieldValue = (type: FieldType, value: unknown): string =>
+  matchShape(type, {
+    scalar: () => (typeof value === 'string' ? value : ''),
+    record: ({ parts }) => {
+      if (!isRecordValue(value)) {
+        return '';
+      }
 
-  if (!isPartRecord(value)) {
-    return '';
-  }
+      const partTypes: Record<string, PartType | undefined> = parts;
+      const readPart = (part: string): unknown => {
+        const raw = value[part];
+        return partTypes[part] === 'country_code' && typeof raw === 'string'
+          ? countryName(raw)
+          : raw;
+      };
 
-  // A country is stored as its code and read as its name: "US" is for machines to
-  // compare, "United States" is what a person expects on a record.
-  const partTypes: Record<string, PartType | undefined> = partTypesOf(type) ?? {};
-  const readPart = (part: string): unknown => {
-    const raw = value[part];
-    return partTypes[part] === 'country_code' && typeof raw === 'string' ? countryName(raw) : raw;
-  };
-
-  return partRuns[type]
-    .map((run) =>
-      run
-        .map(readPart)
-        .filter((part): part is string => typeof part === 'string' && part !== '')
-        .join(' '),
-    )
-    .filter(Boolean)
-    .join(', ');
-};
-
-export const memberCustomFieldKind = (type: FieldType): FieldKind => FIELD_TYPES[type].kind;
+      return partRuns[type]
+        .map((run) =>
+          run
+            .map(readPart)
+            .filter((part): part is string => typeof part === 'string' && part !== '')
+            .join(' '),
+        )
+        .filter(Boolean)
+        .join(', ');
+    },
+  });
 
 const MemberCustomFieldList = z.array(MetafieldDefinitionSchema);
 const MemberCustomFieldsResponse = z.object({ members_metafields: MemberCustomFieldList });

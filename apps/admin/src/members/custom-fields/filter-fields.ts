@@ -11,10 +11,7 @@ import {
   setSemantics,
   textSemantics,
 } from '@/shared/filters';
-import {
-  memberCustomFieldKind,
-  memberCustomFieldParts,
-} from '@tryghost/admin-x-framework/api/member-custom-fields';
+import { matchShape } from '@tryghost/metafield-types/structure';
 import type {
   FieldDescriptor,
   FieldProvider,
@@ -27,9 +24,7 @@ import type {
   MemberCustomFieldPartType,
 } from '@tryghost/admin-x-framework/api/member-custom-fields';
 
-export const SCALAR_KIND_FILTER_TYPE: {
-  [K in Exclude<MemberCustomFieldKind, 'record'>]: FilterTypeId;
-} = {
+export const KIND_FILTER_TYPE: { [K in MemberCustomFieldKind]: FilterTypeId } = {
   text: 'text',
   date: 'plain_date',
   number: 'number',
@@ -59,12 +54,17 @@ export function partFilterType(
   type: MemberCustomField['type'],
   part: string,
 ): PartFilterType | undefined {
-  const declared = memberCustomFieldParts(type)?.find((candidate) => candidate.key === part);
-  return declared ? PART_FILTER_TYPE[declared.type] : undefined;
+  return matchShape<PartFilterType | undefined>(type, {
+    scalar: () => undefined,
+    record: ({ parts }) =>
+      Object.keys(parts).includes(part) ? PART_FILTER_TYPE[parts[part]] : undefined,
+  });
 }
 
-function usedPartTypes(type: MemberCustomField['type']): readonly PartFilterType[] {
-  const used = new Set((memberCustomFieldParts(type) ?? []).map((p) => PART_FILTER_TYPE[p.type]));
+function usedPartTypes(
+  parts: Readonly<Record<string, MemberCustomFieldPartType>>,
+): readonly PartFilterType[] {
+  const used = new Set(Object.values(parts).map((partType) => PART_FILTER_TYPE[partType]));
   return PART_FILTER_TYPES.filter((candidate) => used.has(candidate));
 }
 
@@ -115,33 +115,32 @@ export const CUSTOM_FIELD_CLAUSE = METAFIELDS_FIELD_PREFIX;
 export type CustomFieldDefinition = Pick<MemberCustomField, 'namespace' | 'key' | 'name' | 'type'>;
 
 export function customFieldDescriptor(definition: CustomFieldDefinition): FieldDescriptor {
-  const kind = memberCustomFieldKind(definition.type);
-
-  if (kind === 'record') {
-    return domainField({
-      key: metafieldFieldId(definition),
-      icon: 'text',
-      semantics: customFieldSemantics(usedPartTypes(definition.type)),
-      operators: customFieldOperators(usedPartTypes(definition.type)),
-      addressing: customFieldAddressing(definition),
-      ui: {
-        label: definition.name,
-        type: 'custom',
-        defaultOperator: 'is-set',
-      },
-    });
-  }
-
-  return {
-    key: metafieldFieldId(definition),
-    icon: 'text',
-    type: SCALAR_KIND_FILTER_TYPE[kind],
-    addressing: customFieldAddressing(definition),
-    ui: {
-      label: definition.name,
-      type: 'custom',
-    },
-  } as FieldDescriptor;
+  return matchShape<FieldDescriptor>(definition.type, {
+    scalar: ({ kind }) =>
+      ({
+        key: metafieldFieldId(definition),
+        icon: 'text',
+        type: KIND_FILTER_TYPE[kind],
+        addressing: customFieldAddressing(definition),
+        ui: {
+          label: definition.name,
+          type: 'custom',
+        },
+      }) as FieldDescriptor,
+    record: ({ parts }) =>
+      domainField({
+        key: metafieldFieldId(definition),
+        icon: 'text',
+        semantics: customFieldSemantics(usedPartTypes(parts)),
+        operators: customFieldOperators(usedPartTypes(parts)),
+        addressing: customFieldAddressing(definition),
+        ui: {
+          label: definition.name,
+          type: 'custom',
+          defaultOperator: 'is-set',
+        },
+      }),
+  });
 }
 
 export function customFieldProvider(

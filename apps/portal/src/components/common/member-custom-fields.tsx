@@ -1,6 +1,6 @@
 import React from 'react';
 import type { Address } from '@tryghost/metafield-types';
-import { FIELD_PARTS } from '@tryghost/metafield-types/structure';
+import { FIELD_STRUCTURES } from '@tryghost/metafield-types/structure';
 import type { FieldType } from '@tryghost/metafield-types/structure';
 
 import InputForm from './input-form';
@@ -44,26 +44,29 @@ interface FieldProps {
   onKeyDown: (event: React.KeyboardEvent) => void;
 }
 
-/** A field that holds a single thing: one input, carrying its own reason. */
-function ScalarField({ field, value, errors, onChange, onKeyDown }: FieldProps) {
-  const name = `custom:${field.key}`;
-  return (
-    <InputForm
-      fields={[
-        {
-          type: field.type === 'long_text' ? 'textarea' : 'text',
-          value: scalarValue(value),
-          label: field.name,
-          name,
-          errorMessage: errors[name] ?? '',
-          readOnly: field.access.member !== 'write',
-        },
-      ]}
-      onChange={(event: { target: { value: string } }) => onChange(field, null, event.target.value)}
-      onKeyDown={onKeyDown}
-    />
-  );
-}
+/** A field that holds a single thing: one input of the kind given, carrying its own reason. */
+const scalarField = (input: 'text' | 'textarea') =>
+  function ScalarField({ field, value, errors, onChange, onKeyDown }: FieldProps) {
+    const name = `custom:${field.key}`;
+    return (
+      <InputForm
+        fields={[
+          {
+            type: input,
+            value: scalarValue(value),
+            label: field.name,
+            name,
+            errorMessage: errors[name] ?? '',
+            readOnly: field.access.member !== 'write',
+          },
+        ]}
+        onChange={(event: { target: { value: string } }) =>
+          onChange(field, null, event.target.value)
+        }
+        onKeyDown={onKeyDown}
+      />
+    );
+  };
 
 interface AddressRowProps {
   parts: (keyof Address)[];
@@ -108,7 +111,7 @@ function AddressField({ field, value, errors, onChange, onKeyDown }: FieldProps)
   const nameOf = (part: keyof Address) => `custom:${field.key}:${part}`;
 
   const input = (part: keyof Address) => {
-    const isCountry = FIELD_PARTS.address[part] === 'country_code';
+    const isCountry = FIELD_STRUCTURES.address.parts[part] === 'country_code';
     return {
       type: isCountry ? 'select' : 'text',
       options: isCountry ? countryOptions(held?.[part]) : undefined,
@@ -183,8 +186,8 @@ interface MemberCustomFieldsProps {
  */
 const DRAWN_BY = {
   address: AddressField,
-  short_text: ScalarField,
-  long_text: ScalarField,
+  short_text: scalarField('text'),
+  long_text: scalarField('textarea'),
 } satisfies Record<FieldType, React.ComponentType<FieldProps>>;
 
 /** The fields a publisher has opened to members, as the member fills them in. */

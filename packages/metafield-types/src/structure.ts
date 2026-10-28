@@ -20,17 +20,27 @@ export const FIELD_TYPE_IDS = ['short_text', 'long_text', 'address'] as const;
 export type FieldType = (typeof FIELD_TYPE_IDS)[number];
 
 /**
- * What kind of thing a type's value is, as anything comparing values needs to know.
+ * How a type's value is laid out: a scalar is one string, and a record is a string for each named
+ * part. Everything that stores, exports, edits or compares a value asks the type for its shape
+ * through `matchShape` rather than inspecting the value, so a new shape fails to compile at each of
+ * them.
+ */
+export const FIELD_SHAPES = ['scalar', 'record'] as const;
+export type FieldShape = (typeof FIELD_SHAPES)[number];
+
+/**
+ * What kind of thing a scalar's value is, as anything comparing values needs to know.
  *
  * Coarser than the type: `short_text` and `long_text` are both text, and differ only in
  * how much of it. This is the level at which a value can be ordered, matched or grouped,
  * so it is what a filter, a sort or an export reads to decide how to treat a value —
- * without either of them enumerating the types themselves.
+ * without either of them enumerating the types themselves. A record has no kind of its
+ * own: it is compared part by part, each by what its part type holds.
  *
  * Deliberately not presentation: it says a value is a date, not that its operator is
  * called "is before". Naming the operators stays with whoever renders them.
  */
-export const FIELD_KINDS = ['text', 'date', 'number', 'record'] as const;
+export const FIELD_KINDS = ['text', 'date', 'number'] as const;
 export type FieldKind = (typeof FIELD_KINDS)[number];
 
 /**
@@ -41,9 +51,26 @@ export type FieldKind = (typeof FIELD_KINDS)[number];
 export const PART_TYPE_IDS = ['short_text', 'postal_code', 'country_code'] as const;
 export type PartType = (typeof PART_TYPE_IDS)[number];
 
+export interface ScalarStructure {
+  readonly shape: 'scalar';
+  readonly kind: FieldKind;
+}
+
 /**
- * Which parts each type has, in the order they are shown, and what each part holds.
- * `null` for a type whose value is a single thing.
+ * Parts are listed in the order they are shown, and that order is relied on wherever parts are laid
+ * out.
+ */
+export interface RecordStructure {
+  readonly shape: 'record';
+  readonly parts: Readonly<Record<string, PartType>>;
+}
+
+export type FieldStructure = ScalarStructure | RecordStructure;
+
+/**
+ * What each type is made of: its shape, and for a scalar its kind or for a record its parts.
+ * This and a type's rule in `./index` are all that adding a type of an existing shape takes
+ * in this package.
  *
  * An address is a delivery address, modeled on Stripe's Address object. Who the parcel
  * is addressed to is not here: a parcel needs a name as well as an address, but that is
@@ -51,18 +78,74 @@ export type PartType = (typeof PART_TYPE_IDS)[number];
  * the account name — gift subscriptions, workplace deliveries, c/o. A site that needs
  * one keeps it in a field of its own, which is also how Stripe hands it back.
  */
-export const FIELD_PARTS = {
-  short_text: null,
-  long_text: null,
+export const FIELD_STRUCTURES = {
+  short_text: { shape: 'scalar', kind: 'text' },
+  long_text: { shape: 'scalar', kind: 'text' },
   address: {
-    line1: 'short_text',
-    line2: 'short_text',
-    city: 'short_text',
-    state: 'short_text',
-    postal_code: 'postal_code',
-    country: 'country_code',
+    shape: 'record',
+    parts: {
+      line1: 'short_text',
+      line2: 'short_text',
+      city: 'short_text',
+      state: 'short_text',
+      postal_code: 'postal_code',
+      country: 'country_code',
+    },
   },
-} as const satisfies Record<FieldType, Readonly<Record<string, PartType>> | null>;
+} as const satisfies Record<FieldType, FieldStructure>;
+
+export type ShapeOf<T extends FieldType> = (typeof FIELD_STRUCTURES)[T]['shape'];
+
+export type FieldTypeOfShape<S extends FieldShape> = {
+  [T in FieldType]: ShapeOf<T> extends S ? T : never;
+}[FieldType];
+
+/**
+ * What to do with a type of each shape, given the type's structure. Every shape needs an
+ * answer, so a shape added above fails to compile at every caller until each says what it
+ * does with one.
+ */
+export type ShapeHandlers<R> = {
+  [S in FieldShape]: (structure: Extract<FieldStructure, { shape: S }>) => R;
+};
+
+/**
+ * A type's structure, or nothing for a type this build has never heard of, which an
+ * integration built against an older package than the site it talks to can be handed. Asked
+ * of the catalog's own entries, so a name every object has, such as `constructor`, is not one.
+ */
+function structureOf(type: FieldType): FieldStructure | undefined {
+  return Object.prototype.hasOwnProperty.call(FIELD_STRUCTURES, type)
+    ? FIELD_STRUCTURES[type]
+    : undefined;
+}
+
+/**
+ * Calls the handler for the shape `type` declares. Throws, naming the type, for one this build
+ * doesn't know; check with `isFieldType` first.
+ */
+export function matchShape<R>(type: FieldType, handlers: ShapeHandlers<R>): R {
+  const structure = structureOf(type);
+  if (!structure) {
+    // A native error, because this module imports nothing, @tryghost/errors included.
+    // oxlint-disable-next-line ghost/ghost-custom/no-native-error
+    throw new Error(`Unknown field type: ${type}`);
+  }
+  switch (structure.shape) {
+    case 'scalar':
+      return handlers.scalar(structure);
+    case 'record':
+      return handlers.record(structure);
+  }
+}
+
+/**
+ * Whether a value is laid out as a record: an object of parts, which a list is not. What a record
+ * must hold is its type's rule to decide.
+ */
+export function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 /**
  * The parts a record type declares, or never for a type whose value is a single thing.
@@ -71,10 +154,15 @@ export const FIELD_PARTS = {
  * every part any type declares rather than the empty intersection of all of them.
  */
 export type PartsOf<T extends FieldType> = T extends FieldType
-  ? (typeof FIELD_PARTS)[T] extends null
-    ? never
-    : Extract<keyof (typeof FIELD_PARTS)[T], string>
+  ? (typeof FIELD_STRUCTURES)[T] extends { parts: infer P }
+    ? Extract<keyof P, string>
+    : never
   : never;
+
+function declaredParts(type: FieldType): Readonly<Record<string, PartType>> | null {
+  const structure = structureOf(type);
+  return structure?.shape === 'record' ? structure.parts : null;
+}
 
 /**
  * The parts of a record type in declaration order, or null for a type with none.
@@ -83,14 +171,12 @@ export type PartsOf<T extends FieldType> = T extends FieldType
  * index a value of that type without restating which parts exist.
  */
 export function partsOf<T extends FieldType>(type: T): PartsOf<T>[] | null {
-  // Optional because a caller built against an older catalog than the server it talks
-  // to reaches here with a type this build has never heard of, which reads as no parts.
-  const parts: Readonly<Record<string, PartType>> | null | undefined = FIELD_PARTS[type];
+  const parts = declaredParts(type);
   return parts ? (Object.keys(parts) as PartsOf<T>[]) : null;
 }
 
 /** Each part's declared type, keyed by part; null for a type with none, and for one this build has never heard of. */
 export function partTypesOf<T extends FieldType>(type: T): Record<PartsOf<T>, PartType> | null {
-  const parts: Readonly<Record<string, PartType>> | null | undefined = FIELD_PARTS[type];
+  const parts = declaredParts(type);
   return parts ? ({ ...parts } as Record<PartsOf<T>, PartType>) : null;
 }

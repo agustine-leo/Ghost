@@ -32,16 +32,6 @@ describe('custom field value storage', function () {
       ]);
     });
 
-    it('refuses a value that is neither a string nor a record of them', function () {
-      // Storing one would write a row the read path then rejects and drops, so the
-      // value would be gone with nothing to say it ever arrived. Nothing reaches
-      // here without being parsed first, which is what makes arriving with one a
-      // mistake in the caller rather than something a member did.
-      for (const value of [null, 42, true]) {
-        assert.throws(() => valueRowsOf(value), /must be a string or a record/);
-      }
-    });
-
     it('splits what a value names into what it sets and what it clears', function () {
       // A path not mentioned appears in neither list, which is how "leave it alone"
       // is expressed: by saying nothing about it.
@@ -73,8 +63,6 @@ describe('custom field value storage', function () {
     });
 
     it('reads the shape from the rows rather than from any field type', function () {
-      // A row at the empty path is the whole value; anything else is a part of
-      // one. So a row written before its type changed reads back as what it was.
       assert.equal(valueFromRows([{ path: ROOT_PATH, value_text: 'Ghosts' }]), 'Ghosts');
       assert.deepEqual(valueFromRows([{ path: 'city', value_text: 'London' }]), {
         city: 'London',
@@ -114,6 +102,8 @@ describe('custom field value storage', function () {
   });
 
   describe('rows become every member’s values', function () {
+    const asRebuilt = (_row: unknown, value: unknown) => value;
+
     it('gathers each value from every row belonging to it', function () {
       const row = (
         memberId: string,
@@ -128,13 +118,16 @@ describe('custom field value storage', function () {
         path,
         value_text: value,
       });
-      const values = valuesFromRows([
-        row('m1', 'custom', 'home_address', 'city', 'London'),
-        row('m1', 'custom', 'nickname', ROOT_PATH, 'Bex'),
-        row('m2', 'custom', 'home_address', 'country', 'IE'),
-        row('m1', 'custom', 'home_address', 'line1', '1 High St'),
-        row('m1', 'transistor', 'nickname', ROOT_PATH, 'Becks'),
-      ]);
+      const values = valuesFromRows(
+        [
+          row('m1', 'custom', 'home_address', 'city', 'London'),
+          row('m1', 'custom', 'nickname', ROOT_PATH, 'Bex'),
+          row('m2', 'custom', 'home_address', 'country', 'IE'),
+          row('m1', 'custom', 'home_address', 'line1', '1 High St'),
+          row('m1', 'transistor', 'nickname', ROOT_PATH, 'Becks'),
+        ],
+        asRebuilt,
+      );
 
       // m1's address arrives split by two unrelated rows; nothing depends on the
       // rows for one value being next to each other. Two namespaces can each hold a
@@ -149,8 +142,29 @@ describe('custom field value storage', function () {
       assert.deepEqual(values.get('m2'), { custom: { home_address: { country: 'IE' } } });
     });
 
+    it('leaves out a namespace whose fields all read as nothing, and a member left with none', function () {
+      const row = (memberId: string, namespace: string, key: string) => ({
+        member_id: memberId,
+        namespace,
+        key,
+        path: ROOT_PATH,
+        value_text: 'x',
+      });
+      const values = valuesFromRows(
+        [
+          row('m1', 'custom', 'unreadable'),
+          row('m1', 'transistor', 'nickname'),
+          row('m2', 'custom', 'unreadable'),
+        ],
+        ({ key }, value) => (key === 'unreadable' ? undefined : value),
+      );
+
+      assert.deepEqual(values.get('m1'), { transistor: { nickname: 'x' } });
+      assert.equal(values.has('m2'), false);
+    });
+
     it('leaves a member with no rows out entirely', function () {
-      assert.deepEqual([...valuesFromRows([]).keys()], []);
+      assert.deepEqual([...valuesFromRows([], asRebuilt).keys()], []);
     });
   });
 });

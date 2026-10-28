@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo } from 'react';
 import { CUSTOM_FIELD_SET_OPERATORS, parseMetafieldFieldId } from './addressing';
+import { matchShape } from '@tryghost/metafield-types/structure';
 import { FILTER_TYPES, createOperatorOptions, listsOperator } from '@/shared/filters';
 import {
   FilterSegmentInput,
@@ -57,7 +58,9 @@ const CustomFieldFilterRenderer: React.FC<CustomRendererProps<string>> = ({
       }))
     : [];
   const fieldLabel = field.label ?? definition?.name ?? 'Custom field';
-  const isComposite = parts.length > 0;
+  const isComposite = definition
+    ? matchShape(definition.type, { scalar: () => false, record: () => true })
+    : false;
 
   // The part first, then what it holds: one text, or the codes an "is any of" lists.
   const [part = '', ...rest] = values;

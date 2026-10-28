@@ -1,20 +1,38 @@
 import { z } from 'zod';
 import { KeySchema, NamespaceSchema } from './identity.js';
-import { FIELD_PARTS, FIELD_TYPE_IDS, type FieldType, type PartType } from './structure.js';
+import {
+  FIELD_STRUCTURES,
+  FIELD_TYPE_IDS,
+  type FieldType,
+  type FieldTypeOfShape,
+  type PartType,
+  type PartsOf,
+  type ShapeOf,
+} from './structure.js';
 
 // Re-exported so a caller that needs both halves still has one import. The split is
 // about what a bundle pays for, not about where the catalog lives.
 export {
   FIELD_KINDS,
-  FIELD_PARTS,
+  FIELD_SHAPES,
+  FIELD_STRUCTURES,
   FIELD_TYPE_IDS,
   PART_TYPE_IDS,
+  isRecordValue,
+  matchShape,
   partTypesOf,
   partsOf,
   type FieldKind,
+  type FieldShape,
+  type FieldStructure,
   type FieldType,
+  type FieldTypeOfShape,
   type PartsOf,
   type PartType,
+  type RecordStructure,
+  type ScalarStructure,
+  type ShapeHandlers,
+  type ShapeOf,
 } from './structure.js';
 
 /**
@@ -239,10 +257,10 @@ const clearable = <T extends PartSchema>(schema: T) =>
     .pipe(z.union([z.literal(''), schema]))
     .optional();
 
-/** The types whose value is made of parts, rather than being a single thing. */
-type RecordFieldType = {
-  [T in FieldType]: (typeof FIELD_PARTS)[T] extends null ? never : T;
-}[FieldType];
+type RecordFieldType = FieldTypeOfShape<'record'>;
+
+/** A record type's declared parts, keyed by part, each naming the type of value it holds. */
+type DeclaredParts<T extends RecordFieldType> = (typeof FIELD_STRUCTURES)[T]['parts'];
 
 /**
  * The shape a record type's schema is built from: its declared parts, each carrying the
@@ -250,23 +268,33 @@ type RecordFieldType = {
  * against admits exactly the parts a renderer would draw.
  */
 type PartShape<T extends RecordFieldType> = {
-  [K in keyof (typeof FIELD_PARTS)[T]]: ReturnType<
-    typeof clearable<(typeof PART_TYPES)[(typeof FIELD_PARTS)[T][K] & PartType]>
+  [K in keyof DeclaredParts<T>]: ReturnType<
+    typeof clearable<(typeof PART_TYPES)[DeclaredParts<T>[K] & PartType]>
   >;
 };
 
-export interface FieldTypeDefinition {
-  /** What kind of value this is, for anything that has to compare one. */
-  kind: import('./structure.js').FieldKind;
-  value: z.ZodType;
+/**
+ * What a type's rule must parse a value to, by shape: a string for a scalar, and a string per
+ * declared part for a record. Storage keeps one string per part, so a rule parsing to anything else
+ * could store a value that never reads back.
+ */
+type ValueOfShape<T extends FieldType> = {
+  scalar: string;
+  record: { [P in PartsOf<T>]?: string };
+}[ShapeOf<T>];
+
+export interface FieldTypeDefinition<T extends FieldType = FieldType> {
+  value: z.ZodType<ValueOfShape<T>>;
 }
 
 /**
- * Every type states its kind alongside its schema, so no type can exist that nothing knows
- * how to compare. The `Record<FieldType, …>` is what makes that exhaustive: an id added to
- * `FIELD_TYPE_IDS` fails to compile until it is declared here.
+ * Every type states the rule its value follows, held to what its shape lays out. The mapped
+ * type is what makes that exhaustive: an id added to `FIELD_TYPE_IDS` fails to compile until
+ * it is declared here, and a rule that parses to another shape fails to compile here too.
  */
-function defineFieldTypes<D extends Record<FieldType, FieldTypeDefinition>>(declarations: D): D {
+function defineFieldTypes<D extends { [T in FieldType]: FieldTypeDefinition<T> }>(
+  declarations: D,
+): D {
   return declarations;
 }
 
@@ -284,7 +312,7 @@ function record<T extends RecordFieldType>(type: T, { error }: { error: string }
   // The parts, and what each holds, are declared in `./structure`; this turns each
   // into the rule a write must satisfy. Reading them from there is what stops the
   // structure a renderer draws and the rules a server enforces from drifting apart.
-  const declared = FIELD_PARTS[type] as Readonly<Record<string, PartType>>;
+  const declared: Readonly<Record<string, PartType>> = FIELD_STRUCTURES[type].parts;
 
   // Restated for the type system, which loses the key-to-part mapping through
   // `Object.fromEntries`. Without it the parsed value widens to a string-keyed record,
@@ -299,12 +327,12 @@ function record<T extends RecordFieldType>(type: T, { error }: { error: string }
     .strictObject(shape)
     .refine((parts) => Object.values(parts).some((entry) => typeof entry === 'string'), { error });
 
-  return { kind: 'record' as const, value };
+  return { value };
 }
 
 export const FIELD_TYPES = defineFieldTypes({
-  short_text: { kind: 'text', value: PART_TYPES.short_text },
-  long_text: { kind: 'text', value: longText() },
+  short_text: { value: PART_TYPES.short_text },
+  long_text: { value: longText() },
   // An address is a delivery address, so its bounds are what a courier will accept
   // rather than what the column could hold. Modeled on Stripe's Address object.
   //
